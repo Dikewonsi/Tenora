@@ -13,6 +13,8 @@ import leaseRoutes from './routes/leaseRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import serviceChargeDemandRoutes from './routes/serviceChargeDemandRoutes.js';
 import serviceChargeDemandItemRoutes from './routes/serviceChargeDemandItemRoutes.js';
+import reminderRoutes from './routes/reminderRoutes.js';
+import dashboardRoutes from './routes/dashboardRoutes.js';
 
 dotenv.config();
 
@@ -59,6 +61,8 @@ app.use('/api/leases', leaseRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/service-charge-demands', serviceChargeDemandRoutes);
 app.use('/api/service-charge-demand-items', serviceChargeDemandItemRoutes);
+app.use('/api/reminders', reminderRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 /*
 |--------------------------------------------------------------------------

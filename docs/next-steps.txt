@@ -1,6 +1,12 @@
-Add tenant
+3. Add filtering/search to list endpoints
+4. Add seed/admin user helper
+5. Add tests or Postman collection
 
-Create tenancy/lease
+
+------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------
+
+Features:
 
 Auto-generate rent reminders
 

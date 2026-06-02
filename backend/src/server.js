@@ -8,6 +8,8 @@ import errorHandler from './middleware/errorHandler.js';
 
 import authRoutes from './routes/authRoutes.js';
 import propertyRoutes from './routes/propertyRoutes.js';
+import tenantRoutes from './routes/tenantRoutes.js';
+import leaseRoutes from './routes/leaseRoutes.js';
 
 dotenv.config();
 
@@ -49,6 +51,8 @@ app.use(cors({
 
 app.use('/api/auth', authRoutes);
 app.use('/api/properties', propertyRoutes);
+app.use('/api/tenants', tenantRoutes);
+app.use('/api/leases', leaseRoutes);
 
 /*
 |--------------------------------------------------------------------------

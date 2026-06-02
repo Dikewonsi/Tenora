@@ -1,7 +1,13 @@
 Add tenant
+
 Create tenancy/lease
+
 Auto-generate rent reminders
+
 Create service charge bill
+
 Auto-calculate tenant service charge share
+
 Record payment
+
 Show overdue rent and overdue service charge items

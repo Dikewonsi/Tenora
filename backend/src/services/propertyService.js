@@ -118,24 +118,35 @@ const updateProperty = async (id, propertyData) => {
 };
 
 const deleteProperty = async (id) => {
-    const result = await pool.query(
-        `
-            DELETE FROM properties
-            WHERE id = $1
-            RETURNING
-                id,
-                property_code,
-                property_name,
-                address,
-                location,
-                property_description,
-                total_units,
-                total_lettable_space,
-                created_at,
-                updated_at
-        `,
-        [id]
-    );
+    let result;
+
+    try {
+        result = await pool.query(
+            `
+                DELETE FROM properties
+                WHERE id = $1
+                RETURNING
+                    id,
+                    property_code,
+                    property_name,
+                    address,
+                    location,
+                    property_description,
+                    total_units,
+                    total_lettable_space,
+                    created_at,
+                    updated_at
+            `,
+            [id]
+        );
+    } catch (error) {
+        if(error.code === '23503') {
+            error.message = 'Property cannot be deleted because it has related lease or service charge records';
+            error.status = 400;
+        }
+
+        throw error;
+    }
 
     const deletedProperty = result.rows[0];
 

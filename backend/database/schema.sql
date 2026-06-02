@@ -50,8 +50,8 @@ CREATE TABLE tenants (
 
 CREATE TABLE leases (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
-    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    property_id UUID NOT NULL REFERENCES properties(id) ON DELETE RESTRICT,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
     unit_number VARCHAR(100),
     unit_description VARCHAR(150),
     start_date DATE NOT NULL,
@@ -72,7 +72,7 @@ CREATE TABLE leases (
 
 CREATE TABLE service_charge_demands (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    property_id UUID NOT NULL REFERENCES properties(id) ON DELETE RESTRICT,
     lease_id UUID NOT NULL REFERENCES leases(id) ON DELETE CASCADE,
     period_start DATE NOT NULL,
     period_end DATE NOT NULL,

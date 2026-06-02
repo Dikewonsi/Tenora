@@ -1,3 +1,50 @@
+Update my current Tenora backend to use the simplified 8-table MVP schema below.
+
+Current state:
+
+Backend already exists with Express/PostgreSQL.
+Auth currently uses admins, but will now be users in updated version
+Property CRUD already exists.
+No frontend exists yet.
+Current schema uses SERIAL integer IDs, but I want to switch to UUIDs now before the project grows.
+Current schema has units, rent_charges, and service_charges, but for this MVP I want to replace that structure with the simplified schema below.
+
+Target MVP tables:
+
+users
+properties
+tenants
+leases
+service_charge_demands
+service_charge_demand_items
+payments
+reminders
+
+Goal:
+The backend should support:
+
+Add property
+
+
+Actions to take:
+
+Edit the existing project. Do not rebuild from scratch.
+Preserve the current controller-service-route structure and exact code
+Replace admins with users.
+Update auth to query users instead of admins.
+Use UUID primary keys with gen_random_uuid().
+Remove or stop using the old units, rent_charges, and service_charges structure.
+Keep unit_number and unit_description inside leases.
+Keep property routes protected by auth middleware.
+Fix JWT so the login token and auth middleware agree on the user payload.
+Reject inactive users only if you keep an is_active column.
+Use consistent JSON responses:
+{ success: true, message, data }
+and errors:
+{ success: false, message }
+
+Use this schema in backend/database/schema.sql:
+
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 DROP TABLE IF EXISTS reminders CASCADE;
@@ -8,10 +55,6 @@ DROP TABLE IF EXISTS leases CASCADE;
 DROP TABLE IF EXISTS tenants CASCADE;
 DROP TABLE IF EXISTS properties CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
-DROP TABLE IF EXISTS admins CASCADE;
-DROP TABLE IF EXISTS units CASCADE;
-DROP TABLE IF EXISTS rent_charges CASCADE;
-DROP TABLE IF EXISTS service_charges CASCADE;
 
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -132,3 +175,13 @@ CREATE TABLE reminders (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
+
+
+At the end, give me:
+
+Files changed
+Files created
+SQL command to reset/import the schema
+Exact npm command to run the backend
+Postman testing order
+Any assumptions you made

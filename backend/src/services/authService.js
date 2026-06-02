@@ -3,31 +3,38 @@ import jwt from 'jsonwebtoken';
 
 import pool from '../db/pool.js';
 
-const loginAdmin = async (email, password) => {
+const loginUser = async (email, password) => {
    
     const result = await pool.query(
         `
             SELECT 
                 id,
-                name,
+                full_name AS "fullName",
                 email,
                 password_hash AS "passwordHash",
-                role
-            FROM admins
+                role,
+                is_active AS "isActive"
+            FROM users
             WHERE email = $1
         `,
         [email]
     );
 
-    const admin = result.rows[0];
+    const user = result.rows[0];
 
-    if(!admin) {
+    if(!user) {
         const error = new Error('Invalid email or password');
         error.status = 401;
         throw error;
     }
 
-    const passwordMatches = await bcrypt.compare(password, admin.passwordHash);
+    if(user.isActive === false) {
+        const error = new Error('User account is inactive');
+        error.status = 403;
+        throw error;
+    }
+
+    const passwordMatches = await bcrypt.compare(password, user.passwordHash);
 
     if(!passwordMatches) {
         const error = new Error('Invalid email or password');
@@ -37,9 +44,9 @@ const loginAdmin = async (email, password) => {
 
     const token = jwt.sign(
         {
-            id: admin.id,
-            email: admin.email,
-            role: admin.role
+            id: user.id,
+            email: user.email,
+            role: user.role
         },
         process.env.JWT_SECRET,
         {
@@ -48,16 +55,16 @@ const loginAdmin = async (email, password) => {
     );
 
     return {
-        admin: {
-            id: admin.id,
-            name: admin.name,
-            email: admin.email,
-            role: admin.role
+        user: {
+            id: user.id,
+            fullName: user.fullName,
+            email: user.email,
+            role: user.role
         },
         token
     };
 };
 
 export default {
-    loginAdmin
+    loginUser
 };

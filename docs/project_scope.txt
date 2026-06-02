@@ -1,0 +1,132 @@
+✅ Focused Blueprint: Rent Reminders + Service Charge Management
+Here’s a clean, developer-friendly document you can send directly to your friend.
+
+PROJECT FOCUS: Rent & Service Charge Module
+App Name: UbosiProp Manager (Phase 1 – MVP)
+Objective
+Build a system that automates rent reminders, tracks payments, manages service charge budgets, calculates tenant apportionments, and generates reports.
+
+1. Database Schema (Core Tables)
+1. Properties Table
+- property_id (UUID PK)
+- property_code (e.g., UE-ABJ-001)
+- address (full address)
+- location (e.g., Maitama, Garki)
+- total_units (integer)
+- owner_id (foreign key)
+- created_at, updated_at
+2. Tenants Table
+- tenant_id (UUID PK)
+- full_name
+- phone_number (unique)
+- email
+- alternative_contact
+- id_card_url
+- created_at
+3. Leases / Tenancies Table (Most Important)
+- lease_id (UUID PK)
+- property_id (FK)
+- unit_number (e.g., Block A, Flat 12)
+- tenant_id (FK)
+- start_date (DATE)
+- end_date (DATE)
+- rent_amount (decimal)          -- monthly rent
+- service_charge_amount (decimal) -- monthly or annual
+- payment_frequency (enum: monthly, quarterly, yearly)
+- status (enum: Active, Expired, Terminated, Notice)
+- next_rent_due_date (DATE)      -- auto-calculated
+- created_at, updated_at
+4. Service Charge Budgets Table
+- budget_id (UUID PK)
+- property_id (FK)
+- budget_year (integer, e.g., 2026)
+- total_annual_budget (decimal)
+- status (Draft, Approved, Closed)
+- created_by (user_id)
+- approved_date
+- created_at
+5. Service Charge Budget Items Table (Breakdown)
+- item_id (UUID PK)
+- budget_id (FK)
+- category (string)               -- e.g., Security, Cleaning, Electricity, Repairs, Generator Fuel, etc.
+- annual_amount (decimal)
+- monthly_amount (decimal)        -- auto-calculated
+- notes
+6. Service Charge Apportionments Table (Per Tenant)
+- apportionment_id (UUID PK)
+- budget_id (FK)
+- lease_id (FK) / tenant_id
+- unit_share_percentage (decimal)   -- or
+- unit_share_amount_monthly (decimal)
+- unit_share_amount_annual (decimal)
+7. Payments Table
+- payment_id (UUID PK)
+- lease_id (FK)
+- amount_paid (decimal)
+- payment_date (DATE)
+- payment_for_month (DATE)           -- e.g., 2026-05-01
+- category (enum: Rent, Service_Charge, Deposit, Others)
+- payment_method
+- receipt_number
+- status (Paid, Partial, Overpaid)
+8. Notices / Reminders Table
+- notice_id (UUID PK)
+- lease_id (FK) / tenant_id
+- type (enum: Rent_Reminder, Service_Charge_Demand, Late_Rent, Quit_Notice)
+- due_date
+- sent_date
+- channel (SMS, Email, WhatsApp, PDF)
+- status (Sent, Delivered, Acknowledged, Failed)
+- acknowledged (boolean)
+- ack_date
+- message_content (text)
+
+2. Key Business Logic & Workflows
+A. Rent Reminders Workflow
+	1	System runs daily cron job.
+	2	Check all active leases where next_rent_due_date is approaching.
+	3	Send reminders automatically:
+	◦	7 days before due
+	◦	On due date
+	◦	7 days after (late notice)
+	4	Update next_rent_due_date after payment is recorded.
+	5	Dashboard should show: Upcoming dues, Arrears, Collection Rate.
+B. Service Charge Calculation Logic
+	1	User creates Annual Budget for a property:
+	◦	Inputs total expenses per category.
+	2	System auto-calculates:
+	◦	Monthly budget = Annual / 12
+	3	Apportionment to tenants:
+	◦	Option 1: Equal share (total_budget / number_of_units)
+	◦	Option 2: Percentage based on unit size / type
+	4	Generate Service Charge Demand Notice per tenant monthly or quarterly.
+	5	Track actual expenses vs budget.
+
+3. Features Needed in This Phase
+Rent Module:
+	•	Rent roll dashboard (all tenants, amounts, due dates)
+	•	Bulk rent reminder sender
+	•	Arrears aging report (30, 60, 90 days)
+	•	Payment recording with photo receipt upload
+Service Charge Module:
+	•	Budget creation form with categories
+	•	Automatic apportionment calculator
+	•	Service charge invoice / demand letter generator (PDF)
+	•	Actual vs Budget variance report
+Communication:
+	•	Tenant portal for viewing dues and acknowledging notices digitally
+	•	Digital acknowledgment button (with timestamp)
+	•	WhatsApp / SMS integration
+Reports:
+	•	Monthly Rent Collection Report
+	•	Service Charge Budget vs Actual
+	•	Tenant Statement of Account
+
+Would you like me to expand any part further? For example:
+	1	Full SQL CREATE TABLE statements with relationships
+	2	Sample API endpoints (REST)
+	3	Detailed calculation formulas (in code logic)
+	4	Dashboard wireframe description
+	5	Cron job logic for reminders
+Just tell me what your developer needs most right now and I’ll generate it immediately.
+You can copy everything above and send to him. This is focused and actionable for Phase 1.

@@ -1,13 +1,15 @@
 import express from 'express';
+import authMiddleware from '../middleware/authMiddleware.js';
+import propertyController from '../controllers/propertyController.js';
 
-import {
-    getAllProperties,
-    createProperty,
-} from '../controllers/propertyController.js';
+const propertyRoutes = express.Router();
 
-const router = express.Router();
+propertyRoutes.use(authMiddleware);
 
-router.get('/', getAllProperties);
-router.post('/', createProperty);
+propertyRoutes.get('/', propertyController.getProperties);
+propertyRoutes.get('/:id', propertyController.getProperty);
+propertyRoutes.post('/', propertyController.createProperty);
+propertyRoutes.put('/:id', propertyController.updateProperty);
+propertyRoutes.delete('/:id', propertyController.deleteProperty);
 
-export default router;
+export default propertyRoutes;

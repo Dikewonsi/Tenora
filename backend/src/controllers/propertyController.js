@@ -1,35 +1,89 @@
-import {
-    getAllProperties as getAllPropertiesService,
-    createProperty as createPropertyService,
-} from '../services/propertyService.js';
+import propertyService from '../services/propertyService.js';
 
-async function getAllProperties(req, res) {
+const getProperties = async (req, res, next) => {
     try {
-        const properties = await getAllPropertiesService();
-        res.json(properties);
+        const properties = await propertyService.getAllProperties();
+
+        res.status(200).json({
+            success: true,
+            message: 'Properties retrieved successfully',
+            data: {
+                count: properties.length,
+                properties
+            }
+        });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({
-            message: 'Failed to fetch properties',
-            error: error.message
-        });    
+        next(error);  
     }
 }
 
-async function createProperty(req, res) {
+const getProperty = async (req, res, next) => {
     try {
-        const property = await createPropertyService(req.body);
-        res.status(201).json(property);
+        const property = await propertyService.getPropertyById(req.params.id);
+
+        res.status(200).json({
+            success: true,
+            message: 'Property retrieved successfully',
+            data: {
+                property
+            }
+        });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({
-            message: 'Failed to create property',
-            error: error.message
-        });    
+        next(error)
     }
 }
 
-export {
-    getAllProperties,
+const createProperty = async (req, res, next) => {
+    try {
+        const property = await propertyService.createProperty(req.body);
+        res.status(201).json({
+            success: true,
+            message: 'Property created successfully',
+            data: {
+                property
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+}
+
+const updateProperty = async (req, res, next) => {
+    try {
+        const property = await propertyService.updateProperty(req.params.id, req.body);
+
+        res.status(200).json({
+            success: true,
+            message: 'Property updated successfully',
+            data: {
+                property
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+}
+
+const deleteProperty = async (req, res, next) => {
+    try {
+        const property = await propertyService.deleteProperty(req.params.id);
+
+        res.status(200).json({
+            success: true,
+            message: 'Property deleted successfully',
+            data: {
+                property
+            }
+        })
+    } catch (error) {
+        next(error)
+    }
+}
+
+export default {
+    getProperties,
+    getProperty,
     createProperty,
+    updateProperty,
+    deleteProperty
 };

@@ -1,11 +1,22 @@
 import pool from '../db/pool.js';
 
-const getAllTenants = async () => {
-    const result = await pool.query(`
-        SELECT *
-        FROM tenants
-        ORDER BY created_at DESC
-    `);
+const getAllTenants = async (filters = {}) => {
+    const { search } = filters;
+
+    const result = await pool.query(
+        `
+            SELECT *
+            FROM tenants
+            WHERE (
+                $1::text IS NULL
+                OR full_name ILIKE '%' || $1 || '%'
+                OR email ILIKE '%' || $1 || '%'
+                OR phone_number ILIKE '%' || $1 || '%'
+            )
+            ORDER BY created_at DESC
+        `,
+        [search || null]
+    );
 
     return result.rows;
 }

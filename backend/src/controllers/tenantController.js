@@ -2,7 +2,7 @@ import tenantService from '../services/tenantService.js';
 
 const getTenants = async (req, res, next) => {
     try {
-        const tenants = await tenantService.getAllTenants();
+        const tenants = await tenantService.getAllTenants(req.query);
 
         res.status(200).json({
             success: true,

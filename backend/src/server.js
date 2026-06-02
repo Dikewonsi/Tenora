@@ -10,6 +10,9 @@ import authRoutes from './routes/authRoutes.js';
 import propertyRoutes from './routes/propertyRoutes.js';
 import tenantRoutes from './routes/tenantRoutes.js';
 import leaseRoutes from './routes/leaseRoutes.js';
+import paymentRoutes from './routes/paymentRoutes.js';
+import serviceChargeDemandRoutes from './routes/serviceChargeDemandRoutes.js';
+import serviceChargeDemandItemRoutes from './routes/serviceChargeDemandItemRoutes.js';
 
 dotenv.config();
 
@@ -53,6 +56,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/properties', propertyRoutes);
 app.use('/api/tenants', tenantRoutes);
 app.use('/api/leases', leaseRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/service-charge-demands', serviceChargeDemandRoutes);
+app.use('/api/service-charge-demand-items', serviceChargeDemandItemRoutes);
 
 /*
 |--------------------------------------------------------------------------

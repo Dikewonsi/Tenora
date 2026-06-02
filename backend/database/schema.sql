@@ -73,7 +73,7 @@ CREATE TABLE leases (
 CREATE TABLE service_charge_demands (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     property_id UUID NOT NULL REFERENCES properties(id) ON DELETE RESTRICT,
-    lease_id UUID NOT NULL REFERENCES leases(id) ON DELETE CASCADE,
+    lease_id UUID NOT NULL REFERENCES leases(id) ON DELETE RESTRICT,
     period_start DATE NOT NULL,
     period_end DATE NOT NULL,
     total_amount DECIMAL(14,2) DEFAULT 0,
@@ -87,7 +87,7 @@ CREATE TABLE service_charge_demands (
 
 CREATE TABLE service_charge_demand_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    demand_id UUID NOT NULL REFERENCES service_charge_demands(id) ON DELETE CASCADE,
+    demand_id UUID NOT NULL REFERENCES service_charge_demands(id) ON DELETE RESTRICT,
     category VARCHAR(100) NOT NULL,
     total_property_cost DECIMAL(14,2) NOT NULL,
     total_lettable_space DECIMAL(12,2) NOT NULL,
@@ -101,7 +101,7 @@ CREATE TABLE service_charge_demand_items (
 
 CREATE TABLE payments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    lease_id UUID NOT NULL REFERENCES leases(id) ON DELETE CASCADE,
+    lease_id UUID NOT NULL REFERENCES leases(id) ON DELETE RESTRICT,
     service_charge_demand_id UUID REFERENCES service_charge_demands(id) ON DELETE SET NULL,
     payment_category VARCHAR(50) NOT NULL,
     amount_paid DECIMAL(14,2) NOT NULL,
@@ -118,8 +118,8 @@ CREATE TABLE payments (
 
 CREATE TABLE reminders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    lease_id UUID REFERENCES leases(id) ON DELETE CASCADE,
-    service_charge_demand_id UUID REFERENCES service_charge_demands(id) ON DELETE CASCADE,
+    lease_id UUID REFERENCES leases(id) ON DELETE SET NULL,
+    service_charge_demand_id UUID REFERENCES service_charge_demands(id) ON DELETE SET NULL,
     reminder_type VARCHAR(50) NOT NULL,
     due_date DATE,
     scheduled_send_date DATE,

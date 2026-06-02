@@ -201,14 +201,25 @@ const updateLease = async (id, leaseData) => {
 }
 
 const deleteLease = async (id) => {
-    const result = await pool.query(
-        `
-            DELETE FROM leases
-            WHERE id = $1
-            RETURNING *
-        `,
-        [id]
-    );
+    let result;
+
+    try {
+        result = await pool.query(
+            `
+                DELETE FROM leases
+                WHERE id = $1
+                RETURNING *
+            `,
+            [id]
+        );
+    } catch (error) {
+        if(error.code === '23503') {
+            error.message = 'Lease cannot be deleted because it has related payments, service charge demands, or reminders';
+            error.status = 400;
+        }
+
+        throw error;
+    }
 
     const deletedLease = result.rows[0];
 

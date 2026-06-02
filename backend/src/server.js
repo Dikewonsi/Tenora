@@ -1,0 +1,73 @@
+import express from 'express';
+import dotenv from 'dotenv';
+import helmet from 'helmet';
+import cors from 'cors';
+
+import notFound from './middleware/notFound.js';
+import errorHandler from './middleware/errorHandler.js';
+
+import authRoutes from './routes/authRoutes.js';
+import propertyRoutes from './routes/propertyRoutes.js';
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 8000;
+
+// Adds secure HTTP headers
+app.use(helmet());
+
+/*
+|--------------------------------------------------------------------------
+| Body Parsers
+|--------------------------------------------------------------------------
+*/
+
+//Prevent huge payload attacks
+app.use(express.json({ limit: '10kb' }));
+app.use(express.urlencoded({
+    extended: false,
+    limit: '10kb'
+}));
+
+// Add cors so frontend and backend can communicate
+const allowedOrigins = [
+    'http://localhost:5173',
+    'https://payorbit.dikewonsi.cloud'
+];
+
+app.use(cors({
+    origin: allowedOrigins
+}));
+
+/*
+|--------------------------------------------------------------------------
+| API Routes
+|--------------------------------------------------------------------------
+*/
+
+app.use('/api/auth', authRoutes);
+app.use('/api/properties', propertyRoutes);
+
+/*
+|--------------------------------------------------------------------------
+| Error Handling
+|--------------------------------------------------------------------------
+*/
+
+// 404 handler
+app.use(notFound);
+
+// GLobal error handler
+app.use(errorHandler);
+
+
+/*
+|--------------------------------------------------------------------------
+| Server
+|--------------------------------------------------------------------------
+*/
+
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});

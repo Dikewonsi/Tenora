@@ -55,6 +55,10 @@ const Dashboard = () => {
   const payments = summary?.payments || {};
   const demands = summary?.serviceChargeDemands || {};
   const reminders = summary?.reminders || {};
+  const activeLeaseCount = Number(counts.active_leases || counts.leases || 0);
+  const totalUnits = Number(counts.total_units || 0);
+  const totalLettableSpace = Number(counts.total_lettable_space || 0);
+  const expiringLeaseCount = Number(counts.expiring_leases_90_days || summary?.expiringLeases?.length || 0);
 
   const chartData = useMemo(() => ([
     { name: 'Properties', value: Number(counts.properties || 0) },
@@ -76,7 +80,7 @@ const Dashboard = () => {
     },
     {
       label: 'Active leases',
-      value: counts.leases || 0,
+      value: activeLeaseCount,
       icon: IconHomeStats
     },
     {
@@ -89,13 +93,13 @@ const Dashboard = () => {
   const operationalMetrics = [
     {
       label: 'Total units',
-      value: '128',
+      value: totalUnits.toLocaleString(),
       detail: 'Across managed properties',
       icon: IconBuildingEstate
     },
     {
       label: 'Lettable space',
-      value: '18,420 sqm',
+      value: `${totalLettableSpace.toLocaleString()} sqm`,
       detail: 'Tracked portfolio space',
       icon: IconRulerMeasure
     },
@@ -107,7 +111,7 @@ const Dashboard = () => {
     },
     {
       label: 'Expiring leases',
-      value: '9',
+      value: expiringLeaseCount,
       detail: 'Within the next 90 days',
       icon: IconCalendarEvent
     }

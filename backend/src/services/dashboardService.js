@@ -15,9 +15,18 @@ const getSummary = async () => {
                 (SELECT COUNT(*) FROM properties) AS properties,
                 (SELECT COUNT(*) FROM tenants) AS tenants,
                 (SELECT COUNT(*) FROM leases) AS leases,
+                (SELECT COUNT(*) FROM leases WHERE status = 'active') AS active_leases,
                 (SELECT COUNT(*) FROM payments) AS payments,
                 (SELECT COUNT(*) FROM service_charge_demands) AS service_charge_demands,
-                (SELECT COUNT(*) FROM reminders) AS reminders
+                (SELECT COUNT(*) FROM reminders) AS reminders,
+                (SELECT COALESCE(SUM(total_units), 0) FROM properties) AS total_units,
+                (SELECT COALESCE(SUM(total_lettable_space), 0) FROM properties) AS total_lettable_space,
+                (
+                    SELECT COUNT(*)
+                    FROM leases
+                    WHERE status = 'active'
+                      AND end_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '90 days'
+                ) AS expiring_leases_90_days
         `),
         pool.query(`
             SELECT status, COUNT(*) AS count

@@ -3,7 +3,15 @@ import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider } from './context/AuthContext';
 import MainLayout from './layouts/MainLayout';
 import Dashboard from './pages/Dashboard';
+import Leases from './pages/Leases';
 import Login from './pages/Login';
+import Payments from './pages/Payments';
+import Properties from './pages/Properties';
+import Reminders from './pages/Reminders';
+import Reports from './pages/Reports';
+import ServiceCharges from './pages/ServiceCharges';
+import Settings from './pages/Settings';
+import Tenants from './pages/Tenants';
 
 const router = createBrowserRouter([
   {
@@ -19,6 +27,38 @@ const router = createBrowserRouter([
           {
             path: '/dashboard',
             element: <Dashboard />
+          },
+          {
+            path: '/properties',
+            element: <Properties />
+          },
+          {
+            path: '/tenants',
+            element: <Tenants />
+          },
+          {
+            path: '/leases',
+            element: <Leases />
+          },
+          {
+            path: '/payments',
+            element: <Payments />
+          },
+          {
+            path: '/service-charges',
+            element: <ServiceCharges />
+          },
+          {
+            path: '/reminders',
+            element: <Reminders />
+          },
+          {
+            path: '/reports',
+            element: <Reports />
+          },
+          {
+            path: '/settings',
+            element: <Settings />
           }
         ]
       }

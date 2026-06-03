@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  IconCalendarEvent,
   IconCashBanknote,
   IconEdit,
   IconFileInvoice,
@@ -11,6 +10,9 @@ import {
   IconX
 } from '@tabler/icons-react';
 import apiClient from '../api/apiClient';
+import { ConfirmModal, FeedbackModal } from '../components/ActionModal';
+import PaginationControls from '../components/PaginationControls';
+import { getStatusStyle } from '../utils/statusStyles';
 
 const emptyForm = {
   lease_id: '',
@@ -46,8 +48,11 @@ const Payments = () => {
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [feedbackModal, setFeedbackModal] = useState(null);
+  const [deletingPayment, setDeletingPayment] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPayment, setEditingPayment] = useState(null);
   const [form, setForm] = useState(emptyForm);
@@ -188,37 +193,60 @@ const Payments = () => {
     try {
       if (editingPayment) {
         await apiClient.put(`/payments/${editingPayment.id}`, getPayload());
-        setSuccess('Payment updated successfully');
+        const message = 'Payment updated successfully';
+        setSuccess(message);
+        setFeedbackModal({ variant: 'success', title: 'Payment saved', message });
       } else {
         await apiClient.post('/payments', getPayload());
-        setSuccess('Payment created successfully');
+        const message = 'Payment created successfully';
+        setSuccess(message);
+        setFeedbackModal({ variant: 'success', title: 'Payment created', message });
       }
 
       closeModal();
       await fetchPayments();
     } catch (paymentError) {
-      setError(paymentError.response?.data?.message || paymentError.message || 'Failed to save payment');
+      const message = paymentError.response?.data?.message || paymentError.message || 'Failed to save payment';
+      setError(message);
+      setFeedbackModal({ variant: 'danger', title: 'Payment could not be saved', message });
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleDelete = async (payment) => {
-    const shouldDelete = window.confirm(`Delete payment ${payment.receipt_number || payment.id}?`);
+  const openDeleteModal = (payment) => {
+    setDeletingPayment(payment);
+    setError('');
+    setSuccess('');
+  };
 
-    if (!shouldDelete) {
+  const closeDeleteModal = () => {
+    setDeletingPayment(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingPayment) {
       return;
     }
 
+    setIsDeleting(true);
     setError('');
     setSuccess('');
 
     try {
-      await apiClient.delete(`/payments/${payment.id}`);
-      setSuccess('Payment deleted successfully');
+      await apiClient.delete(`/payments/${deletingPayment.id}`);
+      const message = 'Payment deleted successfully';
+      setSuccess(message);
+      setFeedbackModal({ variant: 'success', title: 'Payment deleted', message });
+      closeDeleteModal();
       await fetchPayments();
     } catch (paymentError) {
-      setError(paymentError.response?.data?.message || paymentError.message || 'Failed to delete payment');
+      const message = paymentError.response?.data?.message || paymentError.message || 'Failed to delete payment';
+      setError('');
+      setFeedbackModal({ variant: 'danger', title: 'Payment cannot be deleted', message });
+      closeDeleteModal();
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -403,7 +431,7 @@ const Payments = () => {
                   <td>{money.format(Number(payment.amount_paid || 0))}</td>
                   <td>{toDateInput(payment.payment_date) || '-'}</td>
                   <td>
-                    <span className="badge text-capitalize" style={{ background: '#d1fae5', color: emeraldDark }}>
+                    <span className="badge text-capitalize" style={getStatusStyle(payment.status || 'paid')}>
                       {payment.status || 'paid'}
                     </span>
                   </td>
@@ -412,7 +440,7 @@ const Payments = () => {
                       <button className="btn btn-sm btn-light" type="button" onClick={() => openEditModal(payment)} style={{ borderRadius: 10 }}>
                         <IconEdit size={16} />
                       </button>
-                      <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => handleDelete(payment)} style={{ borderRadius: 10 }}>
+                      <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => openDeleteModal(payment)} style={{ borderRadius: 10 }}>
                         <IconTrash size={16} />
                       </button>
                     </div>
@@ -423,72 +451,63 @@ const Payments = () => {
           </table>
         </div>
 
-        <div className="card-footer bg-white border-0 p-4">
-          <div className="d-flex flex-column flex-sm-row align-items-start align-items-sm-center justify-content-between gap-3">
-            <span className="text-secondary">
-              Page {pagination.page || page} of {pagination.totalPages || 1}
-            </span>
-            <div className="d-flex gap-2">
-              <button
-                className="btn btn-light"
-                type="button"
-                disabled={page <= 1 || isLoading}
-                onClick={() => setPage((currentPage) => Math.max(currentPage - 1, 1))}
-                style={{ borderRadius: 12 }}
-              >
-                Previous
-              </button>
-              <button
-                className="btn btn-light"
-                type="button"
-                disabled={page >= (pagination.totalPages || 1) || isLoading}
-                onClick={() => setPage((currentPage) => currentPage + 1)}
-                style={{ borderRadius: 12 }}
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        </div>
+        <PaginationControls
+          currentPage={pagination.page || page}
+          totalPages={pagination.totalPages || 1}
+          total={pagination.total || 0}
+          isLoading={isLoading}
+          onPageChange={setPage}
+        />
       </section>
 
       {isModalOpen && (
         <div
-          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center p-3"
-          style={{ background: 'rgba(15, 23, 42, 0.48)', zIndex: 1050 }}
+          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-start align-items-lg-center justify-content-center p-2 p-sm-3"
+          style={{ background: 'rgba(15, 23, 42, 0.48)', zIndex: 1050, overflowY: 'auto' }}
         >
-          <form className="card border-0 w-100" onSubmit={handleSubmit} style={{ maxWidth: 900, maxHeight: '92vh', overflow: 'auto', borderRadius: 26, boxShadow: '0 28px 80px rgba(15, 23, 42, 0.22)' }}>
-            <div className="card-header bg-white border-0 p-4">
-              <div className="d-flex align-items-center justify-content-between gap-3">
-                <div>
+          <form
+            className="card border-0 w-100 my-2 my-lg-0"
+            onSubmit={handleSubmit}
+            style={{
+              maxWidth: 900,
+              maxHeight: 'calc(100vh - 24px)',
+              overflow: 'hidden',
+              borderRadius: 26,
+              boxShadow: '0 28px 80px rgba(15, 23, 42, 0.22)'
+            }}
+          >
+            <div className="card-header bg-white border-0 p-3 p-sm-4">
+              <div className="d-flex align-items-start justify-content-between gap-3">
+                <div style={{ minWidth: 0 }}>
                   <h3 className="fw-bold mb-1" style={{ color: '#101816' }}>
                     {editingPayment ? 'Edit payment' : 'Add payment'}
                   </h3>
                   <p className="text-secondary mb-0">Record rent or service charge payments against a lease.</p>
                 </div>
-                <button className="btn btn-light btn-icon" type="button" onClick={closeModal} style={{ borderRadius: 12 }}>
+                <button className="btn btn-light btn-icon flex-shrink-0" type="button" onClick={closeModal} style={{ borderRadius: 12 }}>
                   <IconX size={18} />
                 </button>
               </div>
             </div>
 
-            <div className="card-body p-4">
+            <div className="card-body p-3 p-sm-4" style={{ overflowY: 'auto' }}>
               <div className="row g-3">
                 <div className="col-12">
                   <label className="form-label">Lease</label>
-                  <div className="input-icon">
-                    <span className="input-icon-addon">
+                  <div className="d-flex align-items-center gap-2 mb-2 text-secondary small">
+                    <span className="d-flex align-items-center justify-content-center" style={{ width: 28, height: 28, borderRadius: 10, background: '#ecfdf5', color: emeraldDark }}>
                       <IconFileInvoice size={18} />
                     </span>
-                    <select className="form-select" name="lease_id" value={form.lease_id} onChange={handleFormChange} required>
-                      <option value="">Select lease</option>
-                      {leases.map((lease) => (
-                        <option key={lease.id} value={lease.id}>
-                          {lease.tenant_name} · {lease.property_name} · {lease.unit_number || 'No unit'}
-                        </option>
-                      ))}
-                    </select>
+                    <span>Select the lease this payment belongs to</span>
                   </div>
+                  <select className="form-select" name="lease_id" value={form.lease_id} onChange={handleFormChange} required>
+                    <option value="">Select lease</option>
+                    {leases.map((lease) => (
+                      <option key={lease.id} value={lease.id}>
+                        {lease.tenant_name} · {lease.property_name} · {lease.unit_number || 'No unit'}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="col-12 col-md-6">
@@ -513,20 +532,15 @@ const Payments = () => {
                   </select>
                 </div>
 
-                <div className="col-12 col-md-4">
+                <div className="col-12 col-sm-6 col-lg-4">
                   <label className="form-label">Amount paid</label>
                   <input className="form-control" name="amount_paid" type="number" min="0" step="0.01" value={form.amount_paid} onChange={handleFormChange} required />
                 </div>
-                <div className="col-12 col-md-4">
+                <div className="col-12 col-sm-6 col-lg-4">
                   <label className="form-label">Payment date</label>
-                  <div className="input-icon">
-                    <span className="input-icon-addon">
-                      <IconCalendarEvent size={18} />
-                    </span>
-                    <input className="form-control" name="payment_date" type="date" value={form.payment_date} onChange={handleFormChange} required />
-                  </div>
+                  <input className="form-control" name="payment_date" type="date" value={form.payment_date} onChange={handleFormChange} required />
                 </div>
-                <div className="col-12 col-md-4">
+                <div className="col-12 col-sm-6 col-lg-4">
                   <label className="form-label">Status</label>
                   <select className="form-select" name="status" value={form.status} onChange={handleFormChange}>
                     <option value="paid">Paid</option>
@@ -558,8 +572,8 @@ const Payments = () => {
               </div>
             </div>
 
-            <div className="card-footer bg-white border-0 p-4">
-              <div className="d-flex justify-content-end gap-2">
+            <div className="card-footer bg-white border-0 p-3 p-sm-4">
+              <div className="d-flex flex-column flex-sm-row justify-content-end gap-2">
                 <button className="btn btn-light" type="button" onClick={closeModal} style={{ borderRadius: 12 }}>
                   Cancel
                 </button>
@@ -571,6 +585,30 @@ const Payments = () => {
           </form>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={Boolean(deletingPayment)}
+        title="Delete payment?"
+        message={`This will permanently remove payment ${deletingPayment?.receipt_number || deletingPayment?.id || ''}. This action cannot be undone.`}
+        details={(
+          <>
+            <div className="small text-secondary mb-1">Payment details</div>
+            <div className="fw-semibold" style={{ color: '#101816' }}>
+              {deletingPayment ? money.format(Number(deletingPayment.amount_paid || 0)) : money.format(0)} · {deletingPayment?.tenant_name || 'Tenant'}
+            </div>
+          </>
+        )}
+        confirmLabel="Delete payment"
+        isWorking={isDeleting}
+        onCancel={closeDeleteModal}
+        onConfirm={confirmDelete}
+      />
+
+      <FeedbackModal
+        isOpen={Boolean(feedbackModal)}
+        {...(feedbackModal || {})}
+        onClose={() => setFeedbackModal(null)}
+      />
     </div>
   );
 };

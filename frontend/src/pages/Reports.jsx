@@ -8,6 +8,8 @@ import {
   IconReceiptTax
 } from '@tabler/icons-react';
 import apiClient from '../api/apiClient';
+import PaginationControls from '../components/PaginationControls';
+import { getStatusStyle } from '../utils/statusStyles';
 
 const money = new Intl.NumberFormat('en-NG', {
   style: 'currency',
@@ -16,11 +18,23 @@ const money = new Intl.NumberFormat('en-NG', {
 });
 
 const toDateInput = (value) => (value ? String(value).slice(0, 10) : '');
+const reportPageSize = 10;
+
+const paginate = (records, page) => (
+  records.slice((page - 1) * reportPageSize, page * reportPageSize)
+);
+
+const getTotalPages = (records) => (
+  Math.max(1, Math.ceil(records.length / reportPageSize))
+);
 
 const Reports = () => {
   const [arrears, setArrears] = useState([]);
   const [balances, setBalances] = useState([]);
   const [expiringLeases, setExpiringLeases] = useState([]);
+  const [arrearsPage, setArrearsPage] = useState(1);
+  const [balancesPage, setBalancesPage] = useState(1);
+  const [expiringPage, setExpiringPage] = useState(1);
   const [days, setDays] = useState('90');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -34,6 +48,12 @@ const Reports = () => {
     serviceChargeBalance: balances.reduce((sum, item) => sum + Number(item.balance || 0), 0),
     expiringCount: expiringLeases.length
   }), [arrears, balances, expiringLeases]);
+  const paginatedArrears = useMemo(() => paginate(arrears, arrearsPage), [arrears, arrearsPage]);
+  const paginatedBalances = useMemo(() => paginate(balances, balancesPage), [balances, balancesPage]);
+  const paginatedExpiringLeases = useMemo(() => paginate(expiringLeases, expiringPage), [expiringLeases, expiringPage]);
+  const arrearsTotalPages = getTotalPages(arrears);
+  const balancesTotalPages = getTotalPages(balances);
+  const expiringTotalPages = getTotalPages(expiringLeases);
 
   const fetchReports = async () => {
     setIsLoading(true);
@@ -51,6 +71,9 @@ const Reports = () => {
       setArrears(arrearsResponse.data.data.arrears || []);
       setBalances(balancesResponse.data.data.balances || []);
       setExpiringLeases(expiringResponse.data.data.leases || []);
+      setArrearsPage(1);
+      setBalancesPage(1);
+      setExpiringPage(1);
     } catch (reportError) {
       setError(reportError.response?.data?.message || reportError.message || 'Failed to load reports');
     } finally {
@@ -217,7 +240,7 @@ const Reports = () => {
                   <td colSpan="7" className="text-center py-5 text-secondary">No rent arrears found.</td>
                 </tr>
               )}
-              {!isLoading && arrears.map((item) => (
+              {!isLoading && paginatedArrears.map((item) => (
                 <tr key={item.lease_id}>
                   <td className="fw-semibold">{item.tenant_name || '-'}</td>
                   <td>
@@ -229,7 +252,7 @@ const Reports = () => {
                   <td className="fw-bold" style={{ color: emeraldDark }}>{money.format(Number(item.balance || 0))}</td>
                   <td>{toDateInput(item.next_rent_due_date) || '-'}</td>
                   <td>
-                    <span className="badge text-capitalize" style={{ background: '#d1fae5', color: emeraldDark }}>
+                    <span className="badge text-capitalize" style={getStatusStyle(item.status || 'active')}>
                       {item.status || 'active'}
                     </span>
                   </td>
@@ -238,6 +261,13 @@ const Reports = () => {
             </tbody>
           </table>
         </div>
+        <PaginationControls
+          currentPage={arrearsPage}
+          totalPages={arrearsTotalPages}
+          total={arrears.length}
+          isLoading={isLoading}
+          onPageChange={setArrearsPage}
+        />
       </section>
 
       <section className="row g-4">
@@ -279,7 +309,7 @@ const Reports = () => {
                       <td colSpan="4" className="text-center py-5 text-secondary">No balances found.</td>
                     </tr>
                   )}
-                  {!isLoading && balances.map((item) => (
+                  {!isLoading && paginatedBalances.map((item) => (
                     <tr key={item.demand_id}>
                       <td>
                         <div className="fw-semibold">{item.tenant_name || '-'}</div>
@@ -293,6 +323,13 @@ const Reports = () => {
                 </tbody>
               </table>
             </div>
+            <PaginationControls
+              currentPage={balancesPage}
+              totalPages={balancesTotalPages}
+              total={balances.length}
+              isLoading={isLoading}
+              onPageChange={setBalancesPage}
+            />
           </article>
         </div>
 
@@ -334,7 +371,7 @@ const Reports = () => {
                       <td colSpan="4" className="text-center py-5 text-secondary">No expiring leases found.</td>
                     </tr>
                   )}
-                  {!isLoading && expiringLeases.map((lease) => (
+                  {!isLoading && paginatedExpiringLeases.map((lease) => (
                     <tr key={lease.lease_id}>
                       <td className="fw-semibold">{lease.tenant_name || '-'}</td>
                       <td>
@@ -348,6 +385,13 @@ const Reports = () => {
                 </tbody>
               </table>
             </div>
+            <PaginationControls
+              currentPage={expiringPage}
+              totalPages={expiringTotalPages}
+              total={expiringLeases.length}
+              isLoading={isLoading}
+              onPageChange={setExpiringPage}
+            />
           </article>
         </div>
       </section>

@@ -10,6 +10,9 @@ import {
   IconX
 } from '@tabler/icons-react';
 import apiClient from '../api/apiClient';
+import { ConfirmModal, FeedbackModal } from '../components/ActionModal';
+import PaginationControls from '../components/PaginationControls';
+import { getStatusStyle } from '../utils/statusStyles';
 
 const emptyDemandForm = {
   property_id: '',
@@ -54,8 +57,11 @@ const ServiceCharges = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isItemsLoading, setIsItemsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [feedbackModal, setFeedbackModal] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [isDemandModalOpen, setIsDemandModalOpen] = useState(false);
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
   const [editingDemand, setEditingDemand] = useState(null);
@@ -312,44 +318,62 @@ const ServiceCharges = () => {
   };
 
   const handleDeleteDemand = async (demand) => {
-    const shouldDelete = window.confirm(`Delete service charge demand for ${demand.tenant_name || demand.property_name}?`);
-
-    if (!shouldDelete) {
-      return;
-    }
-
+    setDeleteTarget({ type: 'demand', record: demand });
     setError('');
     setSuccess('');
-
-    try {
-      await apiClient.delete(`/service-charge-demands/${demand.id}`);
-      setSuccess('Service charge demand deleted successfully');
-      if (selectedDemand?.id === demand.id) {
-        setSelectedDemand(null);
-        setItems([]);
-      }
-      await fetchDemands();
-    } catch (demandError) {
-      setError(demandError.response?.data?.message || demandError.message || 'Failed to delete service charge demand');
-    }
   };
 
   const handleDeleteItem = async (item) => {
-    const shouldDelete = window.confirm(`Delete ${item.category} item?`);
+    setDeleteTarget({ type: 'item', record: item });
+    setError('');
+    setSuccess('');
+  };
 
-    if (!shouldDelete) {
+  const closeDeleteModal = () => {
+    setDeleteTarget(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) {
       return;
     }
 
+    setIsDeleting(true);
     setError('');
     setSuccess('');
 
     try {
-      await apiClient.delete(`/service-charge-demand-items/${item.id}`);
-      setSuccess('Demand item deleted successfully');
-      await fetchItems(selectedDemand?.id);
-    } catch (itemError) {
-      setError(itemError.response?.data?.message || itemError.message || 'Failed to delete demand item');
+      if (deleteTarget.type === 'demand') {
+        await apiClient.delete(`/service-charge-demands/${deleteTarget.record.id}`);
+        const message = 'Service charge demand deleted successfully';
+        setSuccess(message);
+        setFeedbackModal({ variant: 'success', title: 'Demand deleted', message });
+        if (selectedDemand?.id === deleteTarget.record.id) {
+          setSelectedDemand(null);
+          setItems([]);
+        }
+        await fetchDemands();
+      } else {
+        await apiClient.delete(`/service-charge-demand-items/${deleteTarget.record.id}`);
+        const message = 'Demand item deleted successfully';
+        setSuccess(message);
+        setFeedbackModal({ variant: 'success', title: 'Demand item deleted', message });
+        await fetchItems(selectedDemand?.id);
+      }
+      closeDeleteModal();
+    } catch (deleteError) {
+      const fallback = deleteTarget.type === 'demand' ? 'Failed to delete service charge demand' : 'Failed to delete demand item';
+      const message = deleteError.response?.data?.message || deleteError.message || fallback;
+      setError('');
+      setFeedbackModal({
+        variant: 'danger',
+        title: deleteTarget.type === 'demand' ? 'Demand cannot be deleted' : 'Demand item cannot be deleted',
+        message,
+        guidance: message.toLowerCase().includes('related') ? 'This protects related payments, reminders, or service charge history from being removed accidentally.' : ''
+      });
+      closeDeleteModal();
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -542,7 +566,7 @@ const ServiceCharges = () => {
                   <td>{money.format(Number(demand.amount_paid || 0))}</td>
                   <td>{money.format(Number(demand.balance || 0))}</td>
                   <td>
-                    <span className="badge text-capitalize" style={{ background: '#d1fae5', color: emeraldDark }}>
+                    <span className="badge text-capitalize" style={getStatusStyle(demand.status || 'draft')}>
                       {demand.status || 'draft'}
                     </span>
                   </td>
@@ -562,33 +586,13 @@ const ServiceCharges = () => {
           </table>
         </div>
 
-        <div className="card-footer bg-white border-0 p-4">
-          <div className="d-flex flex-column flex-sm-row align-items-start align-items-sm-center justify-content-between gap-3">
-            <span className="text-secondary">
-              Page {pagination.page || page} of {pagination.totalPages || 1}
-            </span>
-            <div className="d-flex gap-2">
-              <button
-                className="btn btn-light"
-                type="button"
-                disabled={page <= 1 || isLoading}
-                onClick={() => setPage((currentPage) => Math.max(currentPage - 1, 1))}
-                style={{ borderRadius: 12 }}
-              >
-                Previous
-              </button>
-              <button
-                className="btn btn-light"
-                type="button"
-                disabled={page >= (pagination.totalPages || 1) || isLoading}
-                onClick={() => setPage((currentPage) => currentPage + 1)}
-                style={{ borderRadius: 12 }}
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        </div>
+        <PaginationControls
+          currentPage={pagination.page || page}
+          totalPages={pagination.totalPages || 1}
+          total={pagination.total || 0}
+          isLoading={isLoading}
+          onPageChange={setPage}
+        />
       </section>
 
       <section className="card border-0 overflow-hidden" style={{ borderRadius: 26, boxShadow: cardShadow }}>
@@ -810,6 +814,36 @@ const ServiceCharges = () => {
           </form>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={Boolean(deleteTarget)}
+        title={deleteTarget?.type === 'demand' ? 'Delete service charge demand?' : 'Delete demand item?'}
+        message={
+          deleteTarget?.type === 'demand'
+            ? `This will permanently remove the demand for ${deleteTarget?.record?.tenant_name || deleteTarget?.record?.property_name || 'this tenant'}.`
+            : `This will permanently remove the ${deleteTarget?.record?.category || 'selected'} demand item.`
+        }
+        details={(
+          <>
+            <div className="small text-secondary mb-1">Record details</div>
+            <div className="fw-semibold" style={{ color: '#101816' }}>
+              {deleteTarget?.type === 'demand'
+                ? `${deleteTarget?.record?.property_name || 'Property'} · ${toDateInput(deleteTarget?.record?.period_start)} to ${toDateInput(deleteTarget?.record?.period_end)}`
+                : `${money.format(Number(deleteTarget?.record?.tenant_amount || 0))} · ${deleteTarget?.record?.notes || 'No notes'}`}
+            </div>
+          </>
+        )}
+        confirmLabel={deleteTarget?.type === 'demand' ? 'Delete demand' : 'Delete item'}
+        isWorking={isDeleting}
+        onCancel={closeDeleteModal}
+        onConfirm={confirmDelete}
+      />
+
+      <FeedbackModal
+        isOpen={Boolean(feedbackModal)}
+        {...(feedbackModal || {})}
+        onClose={() => setFeedbackModal(null)}
+      />
     </div>
   );
 };

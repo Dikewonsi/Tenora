@@ -12,6 +12,9 @@ import {
   IconX
 } from '@tabler/icons-react';
 import apiClient from '../api/apiClient';
+import { ConfirmModal, FeedbackModal } from '../components/ActionModal';
+import PaginationControls from '../components/PaginationControls';
+import { getBooleanStatusStyle, getStatusStyle } from '../utils/statusStyles';
 
 const emptyForm = {
   lease_id: '',
@@ -52,8 +55,11 @@ const Reminders = () => {
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isActionWorking, setIsActionWorking] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [feedbackModal, setFeedbackModal] = useState(null);
+  const [actionTarget, setActionTarget] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingReminder, setEditingReminder] = useState(null);
   const [form, setForm] = useState(emptyForm);
@@ -221,48 +227,56 @@ const Reminders = () => {
     }
   };
 
-  const handleDelete = async (reminder) => {
-    const shouldDelete = window.confirm(`Delete ${reminderTypeLabel(reminder.reminder_type)} reminder?`);
+  const openActionModal = (action, reminder) => {
+    setActionTarget({ action, reminder });
+    setError('');
+    setSuccess('');
+  };
 
-    if (!shouldDelete) {
+  const closeActionModal = () => {
+    setActionTarget(null);
+  };
+
+  const confirmAction = async () => {
+    if (!actionTarget) {
       return;
     }
 
+    setIsActionWorking(true);
     setError('');
     setSuccess('');
 
     try {
-      await apiClient.delete(`/reminders/${reminder.id}`);
-      setSuccess('Reminder deleted successfully');
+      if (actionTarget.action === 'delete') {
+        await apiClient.delete(`/reminders/${actionTarget.reminder.id}`);
+        const message = 'Reminder deleted successfully';
+        setSuccess(message);
+        setFeedbackModal({ variant: 'success', title: 'Reminder deleted', message });
+      } else if (actionTarget.action === 'mark-sent') {
+        await apiClient.put(`/reminders/${actionTarget.reminder.id}/mark-sent`);
+        const message = 'Reminder marked as sent';
+        setSuccess(message);
+        setFeedbackModal({ variant: 'success', title: 'Reminder sent', message });
+      } else {
+        await apiClient.put(`/reminders/${actionTarget.reminder.id}/acknowledge`);
+        const message = 'Reminder acknowledged';
+        setSuccess(message);
+        setFeedbackModal({ variant: 'success', title: 'Reminder acknowledged', message });
+      }
+      closeActionModal();
       await fetchReminders();
     } catch (reminderError) {
-      setError(reminderError.response?.data?.message || reminderError.message || 'Failed to delete reminder');
-    }
-  };
-
-  const handleMarkSent = async (reminder) => {
-    setError('');
-    setSuccess('');
-
-    try {
-      await apiClient.put(`/reminders/${reminder.id}/mark-sent`);
-      setSuccess('Reminder marked as sent');
-      await fetchReminders();
-    } catch (reminderError) {
-      setError(reminderError.response?.data?.message || reminderError.message || 'Failed to mark reminder as sent');
-    }
-  };
-
-  const handleAcknowledge = async (reminder) => {
-    setError('');
-    setSuccess('');
-
-    try {
-      await apiClient.put(`/reminders/${reminder.id}/acknowledge`);
-      setSuccess('Reminder acknowledged');
-      await fetchReminders();
-    } catch (reminderError) {
-      setError(reminderError.response?.data?.message || reminderError.message || 'Failed to acknowledge reminder');
+      const fallback = actionTarget.action === 'delete'
+        ? 'Failed to delete reminder'
+        : actionTarget.action === 'mark-sent'
+          ? 'Failed to mark reminder as sent'
+          : 'Failed to acknowledge reminder';
+      const message = reminderError.response?.data?.message || reminderError.message || fallback;
+      setError('');
+      setFeedbackModal({ variant: 'danger', title: 'Reminder action failed', message });
+      closeActionModal();
+    } finally {
+      setIsActionWorking(false);
     }
   };
 
@@ -511,12 +525,12 @@ const Reminders = () => {
                   <td>{toDateInput(reminder.scheduled_send_date) || '-'}</td>
                   <td className="text-capitalize">{reminder.channel || 'email'}</td>
                   <td>
-                    <span className="badge text-capitalize" style={{ background: '#d1fae5', color: emeraldDark }}>
+                    <span className="badge text-capitalize" style={getStatusStyle(reminder.status || 'pending')}>
                       {reminder.status || 'pending'}
                     </span>
                   </td>
                   <td>
-                    <span className={`badge ${reminder.acknowledged ? 'bg-success-lt text-success' : 'bg-secondary-lt text-secondary'}`}>
+                    <span className="badge" style={getBooleanStatusStyle(reminder.acknowledged)}>
                       {reminder.acknowledged ? 'Yes' : 'No'}
                     </span>
                   </td>
@@ -525,7 +539,7 @@ const Reminders = () => {
                       <button
                         className="btn btn-sm btn-light"
                         type="button"
-                        onClick={() => handleMarkSent(reminder)}
+                        onClick={() => openActionModal('mark-sent', reminder)}
                         disabled={reminder.status === 'sent'}
                         title="Mark sent"
                         style={{ borderRadius: 10 }}
@@ -535,7 +549,7 @@ const Reminders = () => {
                       <button
                         className="btn btn-sm btn-light"
                         type="button"
-                        onClick={() => handleAcknowledge(reminder)}
+                        onClick={() => openActionModal('acknowledge', reminder)}
                         disabled={reminder.acknowledged}
                         title="Acknowledge"
                         style={{ borderRadius: 10 }}
@@ -545,7 +559,7 @@ const Reminders = () => {
                       <button className="btn btn-sm btn-light" type="button" onClick={() => openEditModal(reminder)} style={{ borderRadius: 10 }}>
                         <IconEdit size={16} />
                       </button>
-                      <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => handleDelete(reminder)} style={{ borderRadius: 10 }}>
+                      <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => openActionModal('delete', reminder)} style={{ borderRadius: 10 }}>
                         <IconTrash size={16} />
                       </button>
                     </div>
@@ -556,33 +570,13 @@ const Reminders = () => {
           </table>
         </div>
 
-        <div className="card-footer bg-white border-0 p-4">
-          <div className="d-flex flex-column flex-sm-row align-items-start align-items-sm-center justify-content-between gap-3">
-            <span className="text-secondary">
-              Page {pagination.page || page} of {pagination.totalPages || 1}
-            </span>
-            <div className="d-flex gap-2">
-              <button
-                className="btn btn-light"
-                type="button"
-                disabled={page <= 1 || isLoading}
-                onClick={() => setPage((currentPage) => Math.max(currentPage - 1, 1))}
-                style={{ borderRadius: 12 }}
-              >
-                Previous
-              </button>
-              <button
-                className="btn btn-light"
-                type="button"
-                disabled={page >= (pagination.totalPages || 1) || isLoading}
-                onClick={() => setPage((currentPage) => currentPage + 1)}
-                style={{ borderRadius: 12 }}
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        </div>
+        <PaginationControls
+          currentPage={pagination.page || page}
+          totalPages={pagination.totalPages || 1}
+          total={pagination.total || 0}
+          isLoading={isLoading}
+          onPageChange={setPage}
+        />
       </section>
 
       {isModalOpen && (
@@ -721,6 +715,49 @@ const Reminders = () => {
           </form>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={Boolean(actionTarget)}
+        title={
+          actionTarget?.action === 'delete'
+            ? 'Delete reminder?'
+            : actionTarget?.action === 'mark-sent'
+              ? 'Mark reminder as sent?'
+              : 'Acknowledge reminder?'
+        }
+        message={
+          actionTarget?.action === 'delete'
+            ? `This will permanently remove the ${reminderTypeLabel(actionTarget?.reminder?.reminder_type)} reminder.`
+            : actionTarget?.action === 'mark-sent'
+              ? 'This will update the reminder status to sent and record the sent date.'
+              : 'This will mark the reminder as acknowledged by the tenant.'
+        }
+        details={(
+          <>
+            <div className="small text-secondary mb-1">Reminder details</div>
+            <div className="fw-semibold" style={{ color: '#101816' }}>
+              {actionTarget?.reminder?.tenant_name || 'Tenant'} · {toDateInput(actionTarget?.reminder?.due_date) || 'No due date'}
+            </div>
+          </>
+        )}
+        confirmLabel={
+          actionTarget?.action === 'delete'
+            ? 'Delete reminder'
+            : actionTarget?.action === 'mark-sent'
+              ? 'Mark sent'
+              : 'Acknowledge'
+        }
+        variant={actionTarget?.action === 'delete' ? 'danger' : 'success'}
+        isWorking={isActionWorking}
+        onCancel={closeActionModal}
+        onConfirm={confirmAction}
+      />
+
+      <FeedbackModal
+        isOpen={Boolean(feedbackModal)}
+        {...(feedbackModal || {})}
+        onClose={() => setFeedbackModal(null)}
+      />
     </div>
   );
 };

@@ -60,7 +60,7 @@ const MainLayout = () => {
                 : isSettingsPage
                   ? 'Manage account and workspace basics'
                   : 'Welcome back to Tenora';
-  const actionLabel = isTenantsPage ? 'Add Tenant' : isLeasesPage ? 'Add Lease' : isPaymentsPage ? 'Add Payment' : isServiceChargesPage ? 'Add Demand' : isRemindersPage ? 'Add Reminder' : isReportsPage ? 'Refresh' : isSettingsPage ? 'Profile' : 'Add Property';
+  // const actionLabel = isTenantsPage ? 'Add Tenant' : isLeasesPage ? 'Add Lease' : isPaymentsPage ? 'Add Payment' : isServiceChargesPage ? 'Add Demand' : isRemindersPage ? 'Add Reminder' : isReportsPage ? 'Refresh' : isSettingsPage ? 'Profile' : 'Add Property';
   const actionPath = isTenantsPage ? '/tenants' : isLeasesPage ? '/leases' : isPaymentsPage ? '/payments' : isServiceChargesPage ? '/service-charges' : isRemindersPage ? '/reminders' : isReportsPage ? '/reports' : isSettingsPage ? '/settings' : '/properties';
   const displayName = user?.fullName || user?.full_name || user?.name || 'Tenora Admin';
   const displayEmail = user?.email || 'admin workspace';
@@ -198,14 +198,14 @@ const MainLayout = () => {
               </div>
             </div>
 
-            <button
+            {/* <button
               className="btn rounded-4 fw-bold text-white"
               type="button"
               onClick={() => navigate(actionPath)}
               style={{ background: '#059669', borderColor: '#059669' }}
             >
               {actionLabel}
-            </button>
+            </button> */}
           </div>
         </header>
 

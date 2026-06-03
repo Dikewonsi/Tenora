@@ -11,6 +11,9 @@ import {
   IconX
 } from '@tabler/icons-react';
 import apiClient from '../api/apiClient';
+import { ConfirmModal, FeedbackModal } from '../components/ActionModal';
+import PaginationControls from '../components/PaginationControls';
+import { getStatusStyle } from '../utils/statusStyles';
 
 const emptyForm = {
   property_id: '',
@@ -49,8 +52,11 @@ const Leases = () => {
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [feedbackModal, setFeedbackModal] = useState(null);
+  const [deletingLease, setDeletingLease] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingLease, setEditingLease] = useState(null);
   const [form, setForm] = useState(emptyForm);
@@ -181,37 +187,65 @@ const Leases = () => {
     try {
       if (editingLease) {
         await apiClient.put(`/leases/${editingLease.id}`, getPayload());
-        setSuccess('Lease updated successfully');
+        const message = 'Lease updated successfully';
+        setSuccess(message);
+        setFeedbackModal({ variant: 'success', title: 'Lease saved', message });
       } else {
         await apiClient.post('/leases', getPayload());
-        setSuccess('Lease created successfully');
+        const message = 'Lease created successfully';
+        setSuccess(message);
+        setFeedbackModal({ variant: 'success', title: 'Lease created', message });
       }
 
       closeModal();
       await fetchLeases();
     } catch (leaseError) {
-      setError(leaseError.response?.data?.message || leaseError.message || 'Failed to save lease');
+      const message = leaseError.response?.data?.message || leaseError.message || 'Failed to save lease';
+      setError(message);
+      setFeedbackModal({ variant: 'danger', title: 'Lease could not be saved', message });
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleDelete = async (lease) => {
-    const shouldDelete = window.confirm(`Delete lease for ${lease.tenant_name || lease.unit_number}?`);
+  const openDeleteModal = (lease) => {
+    setDeletingLease(lease);
+    setError('');
+    setSuccess('');
+  };
 
-    if (!shouldDelete) {
+  const closeDeleteModal = () => {
+    setDeletingLease(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingLease) {
       return;
     }
 
+    setIsDeleting(true);
     setError('');
     setSuccess('');
 
     try {
-      await apiClient.delete(`/leases/${lease.id}`);
-      setSuccess('Lease deleted successfully');
+      await apiClient.delete(`/leases/${deletingLease.id}`);
+      const message = 'Lease deleted successfully';
+      setSuccess(message);
+      setFeedbackModal({ variant: 'success', title: 'Lease deleted', message });
+      closeDeleteModal();
       await fetchLeases();
     } catch (leaseError) {
-      setError(leaseError.response?.data?.message || leaseError.message || 'Failed to delete lease');
+      const message = leaseError.response?.data?.message || leaseError.message || 'Failed to delete lease';
+      setError('');
+      setFeedbackModal({
+        variant: 'danger',
+        title: 'Lease cannot be deleted',
+        message,
+        guidance: message.toLowerCase().includes('related') ? 'This protects related payments, service charge demands, and reminders from losing their lease history.' : ''
+      });
+      closeDeleteModal();
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -402,7 +436,7 @@ const Leases = () => {
                   <td>{lease.rent_amount ? Number(lease.rent_amount).toLocaleString() : '0'}</td>
                   <td>{lease.service_charge_amount ? Number(lease.service_charge_amount).toLocaleString() : '0'}</td>
                   <td>
-                    <span className="badge text-capitalize" style={{ background: '#d1fae5', color: emeraldDark }}>
+                    <span className="badge text-capitalize" style={getStatusStyle(lease.status || 'active')}>
                       {lease.status || 'active'}
                     </span>
                   </td>
@@ -411,7 +445,7 @@ const Leases = () => {
                       <button className="btn btn-sm btn-light" type="button" onClick={() => openEditModal(lease)} style={{ borderRadius: 10 }}>
                         <IconEdit size={16} />
                       </button>
-                      <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => handleDelete(lease)} style={{ borderRadius: 10 }}>
+                      <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => openDeleteModal(lease)} style={{ borderRadius: 10 }}>
                         <IconTrash size={16} />
                       </button>
                     </div>
@@ -422,106 +456,98 @@ const Leases = () => {
           </table>
         </div>
 
-        <div className="card-footer bg-white border-0 p-4">
-          <div className="d-flex flex-column flex-sm-row align-items-start align-items-sm-center justify-content-between gap-3">
-            <span className="text-secondary">
-              Page {pagination.page || page} of {pagination.totalPages || 1}
-            </span>
-            <div className="d-flex gap-2">
-              <button
-                className="btn btn-light"
-                type="button"
-                disabled={page <= 1 || isLoading}
-                onClick={() => setPage((currentPage) => Math.max(currentPage - 1, 1))}
-                style={{ borderRadius: 12 }}
-              >
-                Previous
-              </button>
-              <button
-                className="btn btn-light"
-                type="button"
-                disabled={page >= (pagination.totalPages || 1) || isLoading}
-                onClick={() => setPage((currentPage) => currentPage + 1)}
-                style={{ borderRadius: 12 }}
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        </div>
+        <PaginationControls
+          currentPage={pagination.page || page}
+          totalPages={pagination.totalPages || 1}
+          total={pagination.total || 0}
+          isLoading={isLoading}
+          onPageChange={setPage}
+        />
       </section>
 
       {isModalOpen && (
         <div
-          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center p-3"
-          style={{ background: 'rgba(15, 23, 42, 0.48)', zIndex: 1050 }}
+          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-start align-items-lg-center justify-content-center p-2 p-sm-3"
+          style={{ background: 'rgba(15, 23, 42, 0.48)', zIndex: 1050, overflowY: 'auto' }}
         >
-          <form className="card border-0 w-100" onSubmit={handleSubmit} style={{ maxWidth: 980, maxHeight: '92vh', overflow: 'auto', borderRadius: 26, boxShadow: '0 28px 80px rgba(15, 23, 42, 0.22)' }}>
-            <div className="card-header bg-white border-0 p-4">
-              <div className="d-flex align-items-center justify-content-between gap-3">
-                <div>
+          <form
+            className="card border-0 w-100 my-2 my-lg-0"
+            onSubmit={handleSubmit}
+            style={{
+              maxWidth: 980,
+              maxHeight: 'calc(100vh - 24px)',
+              overflow: 'hidden',
+              borderRadius: 26,
+              boxShadow: '0 28px 80px rgba(15, 23, 42, 0.22)'
+            }}
+          >
+            <div className="card-header bg-white border-0 p-3 p-sm-4">
+              <div className="d-flex align-items-start justify-content-between gap-3">
+                <div style={{ minWidth: 0 }}>
                   <h3 className="fw-bold mb-1" style={{ color: '#101816' }}>
                     {editingLease ? 'Edit lease' : 'Add lease'}
                   </h3>
                   <p className="text-secondary mb-0">Connect a tenant to a property and define lease terms.</p>
                 </div>
-                <button className="btn btn-light btn-icon" type="button" onClick={closeModal} style={{ borderRadius: 12 }}>
+                <button className="btn btn-light btn-icon flex-shrink-0" type="button" onClick={closeModal} style={{ borderRadius: 12 }}>
                   <IconX size={18} />
                 </button>
               </div>
             </div>
 
-            <div className="card-body p-4">
+            <div className="card-body p-3 p-sm-4" style={{ overflowY: 'auto' }}>
               <div className="row g-3">
                 <div className="col-12 col-md-6">
                   <label className="form-label">Property</label>
-                  <div className="input-icon">
-                    <span className="input-icon-addon">
+                  <div className="d-flex align-items-center gap-2 mb-2 text-secondary small">
+                    <span className="d-flex align-items-center justify-content-center" style={{ width: 28, height: 28, borderRadius: 10, background: '#ecfdf5', color: emeraldDark }}>
                       <IconBuildingEstate size={18} />
                     </span>
-                    <select className="form-select" name="property_id" value={form.property_id} onChange={handleFormChange} required>
-                      <option value="">Select property</option>
-                      {properties.map((property) => (
-                        <option key={property.id} value={property.id}>
-                          {property.property_name || property.address}
-                        </option>
-                      ))}
-                    </select>
+                    <span>Choose the property this lease belongs to</span>
                   </div>
+                  <select className="form-select" name="property_id" value={form.property_id} onChange={handleFormChange} required>
+                    <option value="">Select property</option>
+                    {properties.map((property) => (
+                      <option key={property.id} value={property.id}>
+                        {property.property_name || property.address}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="col-12 col-md-6">
                   <label className="form-label">Tenant</label>
-                  <div className="input-icon">
-                    <span className="input-icon-addon">
+                  <div className="d-flex align-items-center gap-2 mb-2 text-secondary small">
+                    <span className="d-flex align-items-center justify-content-center" style={{ width: 28, height: 28, borderRadius: 10, background: '#ecfdf5', color: emeraldDark }}>
                       <IconUser size={18} />
                     </span>
-                    <select className="form-select" name="tenant_id" value={form.tenant_id} onChange={handleFormChange} required>
-                      <option value="">Select tenant</option>
-                      {tenants.map((tenant) => (
-                        <option key={tenant.id} value={tenant.id}>
-                          {tenant.full_name}
-                        </option>
-                      ))}
-                    </select>
+                    <span>Choose the tenant occupying the unit</span>
                   </div>
+                  <select className="form-select" name="tenant_id" value={form.tenant_id} onChange={handleFormChange} required>
+                    <option value="">Select tenant</option>
+                    {tenants.map((tenant) => (
+                      <option key={tenant.id} value={tenant.id}>
+                        {tenant.full_name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <div className="col-12 col-md-4">
+                <div className="col-12 col-sm-6 col-lg-4">
                   <label className="form-label">Unit number</label>
                   <input className="form-control" name="unit_number" value={form.unit_number} onChange={handleFormChange} placeholder="Suite 1A" />
                 </div>
-                <div className="col-12 col-md-8">
+                <div className="col-12 col-lg-8">
                   <label className="form-label">Unit description</label>
                   <input className="form-control" name="unit_description" value={form.unit_description} onChange={handleFormChange} placeholder="Second floor office space" />
                 </div>
-                <div className="col-12 col-md-4">
+                <div className="col-12 col-sm-6 col-lg-4">
                   <label className="form-label">Start date</label>
                   <input className="form-control" name="start_date" type="date" value={form.start_date} onChange={handleFormChange} required />
                 </div>
-                <div className="col-12 col-md-4">
+                <div className="col-12 col-sm-6 col-lg-4">
                   <label className="form-label">End date</label>
                   <input className="form-control" name="end_date" type="date" value={form.end_date} onChange={handleFormChange} required />
                 </div>
-                <div className="col-12 col-md-4">
+                <div className="col-12 col-sm-6 col-lg-4">
                   <label className="form-label">Frequency</label>
                   <select className="form-select" name="payment_frequency" value={form.payment_frequency} onChange={handleFormChange}>
                     <option value="yearly">Yearly</option>
@@ -529,19 +555,19 @@ const Leases = () => {
                     <option value="monthly">Monthly</option>
                   </select>
                 </div>
-                <div className="col-12 col-md-4">
+                <div className="col-12 col-sm-6 col-lg-4">
                   <label className="form-label">Rent amount</label>
                   <input className="form-control" name="rent_amount" type="number" min="0" step="0.01" value={form.rent_amount} onChange={handleFormChange} />
                 </div>
-                <div className="col-12 col-md-4">
+                <div className="col-12 col-sm-6 col-lg-4">
                   <label className="form-label">Service charge</label>
                   <input className="form-control" name="service_charge_amount" type="number" min="0" step="0.01" value={form.service_charge_amount} onChange={handleFormChange} />
                 </div>
-                <div className="col-12 col-md-4">
+                <div className="col-12 col-sm-6 col-lg-4">
                   <label className="form-label">Occupied space</label>
                   <input className="form-control" name="occupied_space" type="number" min="0" step="0.01" value={form.occupied_space} onChange={handleFormChange} />
                 </div>
-                <div className="col-12 col-md-4">
+                <div className="col-12 col-sm-6 col-lg-4">
                   <label className="form-label">Status</label>
                   <select className="form-select" name="status" value={form.status} onChange={handleFormChange}>
                     <option value="active">Active</option>
@@ -549,11 +575,11 @@ const Leases = () => {
                     <option value="terminated">Terminated</option>
                   </select>
                 </div>
-                <div className="col-12 col-md-4">
+                <div className="col-12 col-sm-6 col-lg-4">
                   <label className="form-label">Next rent due</label>
                   <input className="form-control" name="next_rent_due_date" type="date" value={form.next_rent_due_date} onChange={handleFormChange} />
                 </div>
-                <div className="col-12 col-md-4">
+                <div className="col-12 col-sm-6 col-lg-4">
                   <label className="form-label">Last reviewed</label>
                   <input className="form-control" name="last_reviewed_date" type="date" value={form.last_reviewed_date} onChange={handleFormChange} />
                 </div>
@@ -572,8 +598,8 @@ const Leases = () => {
               </div>
             </div>
 
-            <div className="card-footer bg-white border-0 p-4">
-              <div className="d-flex justify-content-end gap-2">
+            <div className="card-footer bg-white border-0 p-3 p-sm-4">
+              <div className="d-flex flex-column flex-sm-row justify-content-end gap-2">
                 <button className="btn btn-light" type="button" onClick={closeModal} style={{ borderRadius: 12 }}>
                   Cancel
                 </button>
@@ -585,6 +611,30 @@ const Leases = () => {
           </form>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={Boolean(deletingLease)}
+        title="Delete lease?"
+        message={`This will permanently remove the lease for ${deletingLease?.tenant_name || deletingLease?.unit_number || 'this tenant'}. This action cannot be undone.`}
+        details={(
+          <>
+            <div className="small text-secondary mb-1">Lease details</div>
+            <div className="fw-semibold" style={{ color: '#101816' }}>
+              {deletingLease?.property_name || 'Property'} · {deletingLease?.unit_number || 'No unit'}
+            </div>
+          </>
+        )}
+        confirmLabel="Delete lease"
+        isWorking={isDeleting}
+        onCancel={closeDeleteModal}
+        onConfirm={confirmDelete}
+      />
+
+      <FeedbackModal
+        isOpen={Boolean(feedbackModal)}
+        {...(feedbackModal || {})}
+        onClose={() => setFeedbackModal(null)}
+      />
     </div>
   );
 };

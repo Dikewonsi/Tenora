@@ -7,9 +7,11 @@ import {
   IconRefresh,
   IconSearch,
   IconTrash,
+  IconAlertCircle,
   IconX
 } from '@tabler/icons-react';
 import apiClient from '../api/apiClient';
+import PaginationControls from '../components/PaginationControls';
 
 const emptyForm = {
   property_code: '',
@@ -34,10 +36,13 @@ const Properties = () => {
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [errorModal, setErrorModal] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProperty, setEditingProperty] = useState(null);
+  const [deletingProperty, setDeletingProperty] = useState(null);
   const [form, setForm] = useState(emptyForm);
 
   const emerald = '#10b981';
@@ -147,22 +152,41 @@ const Properties = () => {
     }
   };
 
-  const handleDelete = async (property) => {
-    const shouldDelete = window.confirm(`Delete ${property.property_name || property.address}?`);
+  const openDeleteModal = (property) => {
+    setDeletingProperty(property);
+    setError('');
+    setSuccess('');
+  };
 
-    if (!shouldDelete) {
+  const closeDeleteModal = () => {
+    setDeletingProperty(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingProperty) {
       return;
     }
 
+    setIsDeleting(true);
     setError('');
     setSuccess('');
 
     try {
-      await apiClient.delete(`/properties/${property.id}`);
+      await apiClient.delete(`/properties/${deletingProperty.id}`);
       setSuccess('Property deleted successfully');
+      closeDeleteModal();
       await fetchProperties();
     } catch (propertyError) {
-      setError(propertyError.response?.data?.message || propertyError.message || 'Failed to delete property');
+      const message = propertyError.response?.data?.message || propertyError.message || 'Failed to delete property';
+
+      setError('');
+      setErrorModal({
+        title: 'Property cannot be deleted',
+        message
+      });
+      closeDeleteModal();
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -349,7 +373,7 @@ const Properties = () => {
                       <button className="btn btn-sm btn-light" type="button" onClick={() => openEditModal(property)} style={{ borderRadius: 10 }}>
                         <IconEdit size={16} />
                       </button>
-                      <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => handleDelete(property)} style={{ borderRadius: 10 }}>
+                      <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => openDeleteModal(property)} style={{ borderRadius: 10 }}>
                         <IconTrash size={16} />
                       </button>
                     </div>
@@ -360,33 +384,13 @@ const Properties = () => {
           </table>
         </div>
 
-        <div className="card-footer bg-white border-0 p-4">
-          <div className="d-flex flex-column flex-sm-row align-items-start align-items-sm-center justify-content-between gap-3">
-            <span className="text-secondary">
-              Page {pagination.page || page} of {pagination.totalPages || 1}
-            </span>
-            <div className="d-flex gap-2">
-              <button
-                className="btn btn-light"
-                type="button"
-                disabled={page <= 1 || isLoading}
-                onClick={() => setPage((currentPage) => Math.max(currentPage - 1, 1))}
-                style={{ borderRadius: 12 }}
-              >
-                Previous
-              </button>
-              <button
-                className="btn btn-light"
-                type="button"
-                disabled={page >= (pagination.totalPages || 1) || isLoading}
-                onClick={() => setPage((currentPage) => currentPage + 1)}
-                style={{ borderRadius: 12 }}
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        </div>
+        <PaginationControls
+          currentPage={pagination.page || page}
+          totalPages={pagination.totalPages || 1}
+          total={pagination.total || 0}
+          isLoading={isLoading}
+          onPageChange={setPage}
+        />
       </section>
 
       {isModalOpen && (
@@ -453,6 +457,99 @@ const Properties = () => {
               </div>
             </div>
           </form>
+        </div>
+      )}
+
+      {deletingProperty && (
+        <div
+          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center p-3"
+          style={{ background: 'rgba(15, 23, 42, 0.48)', zIndex: 1050 }}
+        >
+          <div className="card border-0 w-100" style={{ maxWidth: 520, borderRadius: 26, boxShadow: '0 28px 80px rgba(15, 23, 42, 0.22)' }}>
+            <div className="card-body p-4 p-md-5">
+              <div className="d-flex align-items-start gap-3 mb-4">
+                <div
+                  className="d-flex align-items-center justify-content-center flex-shrink-0"
+                  style={{ width: 52, height: 52, borderRadius: 18, background: '#fee2e2', color: '#dc2626' }}
+                >
+                  <IconTrash size={24} />
+                </div>
+                <div>
+                  <h3 className="fw-bold mb-2" style={{ color: '#101816' }}>Delete property?</h3>
+                  <p className="text-secondary mb-0">
+                    This will permanently remove{' '}
+                    <span className="fw-semibold" style={{ color: '#101816' }}>
+                      {deletingProperty.property_name || deletingProperty.address}
+                    </span>
+                    . This action cannot be undone.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-4 p-3 mb-4" style={{ background: '#f8fafc' }}>
+                <div className="small text-secondary mb-1">Property details</div>
+                <div className="fw-semibold" style={{ color: '#101816' }}>
+                  {deletingProperty.property_code || 'No code'} · {deletingProperty.location || 'No location'}
+                </div>
+              </div>
+
+              <div className="d-flex flex-column flex-sm-row justify-content-end gap-2">
+                <button className="btn btn-light" type="button" onClick={closeDeleteModal} disabled={isDeleting} style={{ borderRadius: 12 }}>
+                  Cancel
+                </button>
+                <button className="btn btn-danger d-inline-flex align-items-center justify-content-center gap-2" type="button" onClick={confirmDelete} disabled={isDeleting} style={{ borderRadius: 12 }}>
+                  <IconTrash size={18} />
+                  {isDeleting ? 'Deleting...' : 'Delete property'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {errorModal && (
+        <div
+          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center p-3"
+          style={{ background: 'rgba(15, 23, 42, 0.48)', zIndex: 1060 }}
+        >
+          <div className="card border-0 w-100 overflow-hidden" style={{ maxWidth: 560, borderRadius: 26, boxShadow: '0 28px 80px rgba(15, 23, 42, 0.22)' }}>
+            <div style={{ height: 6, background: '#dc2626' }} />
+            <div className="card-body p-4 p-md-5">
+              <div className="d-flex align-items-start gap-3 mb-4">
+                <div
+                  className="d-flex align-items-center justify-content-center flex-shrink-0"
+                  style={{ width: 62, height: 62, borderRadius: 20, background: '#fee2e2', color: '#dc2626' }}
+                >
+                  <IconAlertCircle size={38} stroke={2.2} />
+                </div>
+                <div>
+                  <h3 className="fw-bold mb-2" style={{ color: '#101816' }}>
+                    {errorModal.title}
+                  </h3>
+                  <p className="fw-semibold mb-0" style={{ color: '#991b1b' }}>
+                    {errorModal.message}
+                  </p>
+                </div>
+              </div>
+
+              {errorModal.message.toLowerCase().includes('related') && (
+                <div className="rounded-4 p-3 mb-4" style={{ background: '#fef2f2', color: '#7f1d1d' }}>
+                  This protects existing lease, payment, and service charge history from being removed accidentally. Keep this property for audit history, or remove its related records first.
+                </div>
+              )}
+
+              <div className="d-flex justify-content-end">
+                <button
+                  className="btn rounded-4 fw-bold shadow-sm text-white px-4"
+                  type="button"
+                  onClick={() => setErrorModal(null)}
+                  style={{ background: '#059669', borderColor: '#059669' }}
+                >
+                  Got it
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

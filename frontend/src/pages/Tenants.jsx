@@ -13,6 +13,8 @@ import {
   IconX
 } from '@tabler/icons-react';
 import apiClient from '../api/apiClient';
+import { ConfirmModal, FeedbackModal } from '../components/ActionModal';
+import PaginationControls from '../components/PaginationControls';
 
 const emptyForm = {
   full_name: '',
@@ -34,8 +36,11 @@ const Tenants = () => {
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [feedbackModal, setFeedbackModal] = useState(null);
+  const [deletingTenant, setDeletingTenant] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTenant, setEditingTenant] = useState(null);
   const [form, setForm] = useState(emptyForm);
@@ -123,37 +128,65 @@ const Tenants = () => {
     try {
       if (editingTenant) {
         await apiClient.put(`/tenants/${editingTenant.id}`, form);
-        setSuccess('Tenant updated successfully');
+        const message = 'Tenant updated successfully';
+        setSuccess(message);
+        setFeedbackModal({ variant: 'success', title: 'Tenant saved', message });
       } else {
         await apiClient.post('/tenants', form);
-        setSuccess('Tenant created successfully');
+        const message = 'Tenant created successfully';
+        setSuccess(message);
+        setFeedbackModal({ variant: 'success', title: 'Tenant created', message });
       }
 
       closeModal();
       await fetchTenants();
     } catch (tenantError) {
-      setError(tenantError.response?.data?.message || tenantError.message || 'Failed to save tenant');
+      const message = tenantError.response?.data?.message || tenantError.message || 'Failed to save tenant';
+      setError(message);
+      setFeedbackModal({ variant: 'danger', title: 'Tenant could not be saved', message });
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleDelete = async (tenant) => {
-    const shouldDelete = window.confirm(`Delete ${tenant.full_name}?`);
+  const openDeleteModal = (tenant) => {
+    setDeletingTenant(tenant);
+    setError('');
+    setSuccess('');
+  };
 
-    if (!shouldDelete) {
+  const closeDeleteModal = () => {
+    setDeletingTenant(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingTenant) {
       return;
     }
 
+    setIsDeleting(true);
     setError('');
     setSuccess('');
 
     try {
-      await apiClient.delete(`/tenants/${tenant.id}`);
-      setSuccess('Tenant deleted successfully');
+      await apiClient.delete(`/tenants/${deletingTenant.id}`);
+      const message = 'Tenant deleted successfully';
+      setSuccess(message);
+      setFeedbackModal({ variant: 'success', title: 'Tenant deleted', message });
+      closeDeleteModal();
       await fetchTenants();
     } catch (tenantError) {
-      setError(tenantError.response?.data?.message || tenantError.message || 'Failed to delete tenant');
+      const message = tenantError.response?.data?.message || tenantError.message || 'Failed to delete tenant';
+      setError('');
+      setFeedbackModal({
+        variant: 'danger',
+        title: 'Tenant cannot be deleted',
+        message,
+        guidance: message.toLowerCase().includes('related') ? 'This protects existing lease, payment, and reminder history from being removed accidentally.' : ''
+      });
+      closeDeleteModal();
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -324,7 +357,7 @@ const Tenants = () => {
                       <button className="btn btn-sm btn-light" type="button" onClick={() => openEditModal(tenant)} style={{ borderRadius: 10 }}>
                         <IconEdit size={16} />
                       </button>
-                      <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => handleDelete(tenant)} style={{ borderRadius: 10 }}>
+                      <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => openDeleteModal(tenant)} style={{ borderRadius: 10 }}>
                         <IconTrash size={16} />
                       </button>
                     </div>
@@ -335,33 +368,13 @@ const Tenants = () => {
           </table>
         </div>
 
-        <div className="card-footer bg-white border-0 p-4">
-          <div className="d-flex flex-column flex-sm-row align-items-start align-items-sm-center justify-content-between gap-3">
-            <span className="text-secondary">
-              Page {pagination.page || page} of {pagination.totalPages || 1}
-            </span>
-            <div className="d-flex gap-2">
-              <button
-                className="btn btn-light"
-                type="button"
-                disabled={page <= 1 || isLoading}
-                onClick={() => setPage((currentPage) => Math.max(currentPage - 1, 1))}
-                style={{ borderRadius: 12 }}
-              >
-                Previous
-              </button>
-              <button
-                className="btn btn-light"
-                type="button"
-                disabled={page >= (pagination.totalPages || 1) || isLoading}
-                onClick={() => setPage((currentPage) => currentPage + 1)}
-                style={{ borderRadius: 12 }}
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        </div>
+        <PaginationControls
+          currentPage={pagination.page || page}
+          totalPages={pagination.totalPages || 1}
+          total={pagination.total || 0}
+          isLoading={isLoading}
+          onPageChange={setPage}
+        />
       </section>
 
       {isModalOpen && (
@@ -442,6 +455,30 @@ const Tenants = () => {
           </form>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={Boolean(deletingTenant)}
+        title="Delete tenant?"
+        message={`This will permanently remove ${deletingTenant?.full_name || 'this tenant'}. This action cannot be undone.`}
+        details={(
+          <>
+            <div className="small text-secondary mb-1">Tenant details</div>
+            <div className="fw-semibold" style={{ color: '#101816' }}>
+              {deletingTenant?.email || 'No email'} · {deletingTenant?.phone_number || 'No phone'}
+            </div>
+          </>
+        )}
+        confirmLabel="Delete tenant"
+        isWorking={isDeleting}
+        onCancel={closeDeleteModal}
+        onConfirm={confirmDelete}
+      />
+
+      <FeedbackModal
+        isOpen={Boolean(feedbackModal)}
+        {...(feedbackModal || {})}
+        onClose={() => setFeedbackModal(null)}
+      />
     </div>
   );
 };

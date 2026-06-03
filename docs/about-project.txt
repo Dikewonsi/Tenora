@@ -1,0 +1,61 @@
+I used a layered Express architecture. Routes define the API endpoints, controllers handle the HTTP request and response, 
+and services contain the business logic and database queries. I chose it because it keeps the code organized, easier to test, 
+and easier to scale as modules grow.
+
+For Tenora specifically:
+
+Since Tenora has multiple business modules like properties, tenants, leases, reminders, payments, and service charges,
+I did not want all the logic inside route files. Separating routes, controllers, 
+and services makes each module easier to maintain.
+
+
+POST /api/properties
+    ↓
+propertyRoutes.js receives request
+    ↓
+authMiddleware checks JWT
+    ↓
+propertyController validates req.body
+    ↓
+propertyService runs INSERT query
+    ↓
+controller returns JSON response
+
+I will be using Codex For:
+
+CRUD scaffolding
+UI layout
+React forms
+table components
+API client setup
+basic validation
+
+I will personally own:
+
+schema decisions
+business rules
+Postman testing
+debugging
+deployment
+architecture explanation
+portfolio write-up
+
+For Testing:
+
+I used Postman for endpoint-level testing and also created an automated smoke test script that exercises
+the entire workflow from authentication through lease creation, service charge generation, 
+payment recording, reminders, and dashboard reporting. This allowed me to quickly verify that 
+major business flows continued to work after changes.
+
+
+KEY FEATURES/REPORTS:
+Rent Arrears Report - Which tenants owe rent. Something an estate manager would actually open every morning.
+Service Charge Balances Report - Who still owes service charge?
+Expiring Leases Report - Which leases are about to expire?
+
+SOME USER FEATURES:
+Auto-generate rent reminders
+Create service charge bill
+Auto-calculate tenant service charge share
+Record payment
+Show overdue rent and overdue service charge items

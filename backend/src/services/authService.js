@@ -65,6 +65,41 @@ const loginUser = async (email, password) => {
     };
 };
 
+const getCurrentUser = async (userId) => {
+    const result = await pool.query(
+        `
+            SELECT
+                id,
+                full_name AS "fullName",
+                email,
+                role,
+                is_active AS "isActive",
+                created_at AS "createdAt",
+                updated_at AS "updatedAt"
+            FROM users
+            WHERE id = $1
+        `,
+        [userId]
+    );
+
+    const user = result.rows[0];
+
+    if(!user) {
+        const error = new Error('User not found');
+        error.status = 404;
+        throw error;
+    }
+
+    if(user.isActive === false) {
+        const error = new Error('User account is inactive');
+        error.status = 403;
+        throw error;
+    }
+
+    return user;
+}
+
 export default {
-    loginUser
+    loginUser,
+    getCurrentUser
 };

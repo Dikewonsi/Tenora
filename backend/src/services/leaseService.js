@@ -1,8 +1,31 @@
 import pool from '../db/pool.js';
+import { getPagination } from '../utils/pagination.js';
+
+const leaseColumns = `
+    leases.id,
+    leases.property_id,
+    leases.tenant_id,
+    leases.unit_number,
+    leases.unit_description,
+    leases.start_date,
+    leases.end_date,
+    leases.rent_amount,
+    leases.service_charge_amount,
+    leases.payment_frequency,
+    leases.status,
+    leases.next_rent_due_date,
+    leases.reminder_6_month_date,
+    leases.reminder_3_month_date,
+    leases.last_reviewed_date,
+    leases.rent_review_note,
+    leases.occupied_space,
+    leases.created_at AS "createdAt",
+    leases.updated_at AS "updatedAt"
+`;
 
 const selectLeaseQuery = `
     SELECT
-        leases.*,
+        ${leaseColumns},
         properties.property_name,
         properties.property_code,
         tenants.full_name AS tenant_name
@@ -11,13 +34,42 @@ const selectLeaseQuery = `
     INNER JOIN tenants ON tenants.id = leases.tenant_id
 `;
 
-const getAllLeases = async () => {
-    const result = await pool.query(`
-        ${selectLeaseQuery}
-        ORDER BY leases.created_at DESC
-    `);
+const getAllLeases = async (filters = {}) => {
+    const { property_id, tenant_id, status } = filters;
+    const pagination = getPagination(filters);
 
-    return result.rows;
+    const whereClause = `
+        WHERE ($1::uuid IS NULL OR leases.property_id = $1)
+          AND ($2::uuid IS NULL OR leases.tenant_id = $2)
+          AND ($3::text IS NULL OR leases.status = $3)
+    `;
+
+    const params = [property_id || null, tenant_id || null, status || null];
+
+    const result = await pool.query(
+        `
+            ${selectLeaseQuery}
+            ${whereClause}
+            ORDER BY leases.created_at DESC
+            LIMIT $4 OFFSET $5
+        `,
+        [...params, pagination.limit, pagination.offset]
+    );
+
+    const countResult = await pool.query(
+        `
+            SELECT COUNT(*) AS total
+            FROM leases
+            ${whereClause}
+        `,
+        params
+    );
+
+    return {
+        leases: result.rows,
+        total: Number(countResult.rows[0].total),
+        pagination
+    };
 }
 
 const getLeaseById = async (id) => {
@@ -88,7 +140,26 @@ const createLease = async (leaseData) => {
                     occupied_space
                 )
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-                RETURNING *
+                RETURNING
+                    id,
+                    property_id,
+                    tenant_id,
+                    unit_number,
+                    unit_description,
+                    start_date,
+                    end_date,
+                    rent_amount,
+                    service_charge_amount,
+                    payment_frequency,
+                    status,
+                    next_rent_due_date,
+                    reminder_6_month_date,
+                    reminder_3_month_date,
+                    last_reviewed_date,
+                    rent_review_note,
+                    occupied_space,
+                    created_at AS "createdAt",
+                    updated_at AS "updatedAt"
             `,
             [
                 property_id,
@@ -166,7 +237,26 @@ const updateLease = async (id, leaseData) => {
                     occupied_space = $16,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = $17
-                RETURNING *
+                RETURNING
+                    id,
+                    property_id,
+                    tenant_id,
+                    unit_number,
+                    unit_description,
+                    start_date,
+                    end_date,
+                    rent_amount,
+                    service_charge_amount,
+                    payment_frequency,
+                    status,
+                    next_rent_due_date,
+                    reminder_6_month_date,
+                    reminder_3_month_date,
+                    last_reviewed_date,
+                    rent_review_note,
+                    occupied_space,
+                    created_at AS "createdAt",
+                    updated_at AS "updatedAt"
             `,
             [
                 property_id,
@@ -208,7 +298,26 @@ const deleteLease = async (id) => {
             `
                 DELETE FROM leases
                 WHERE id = $1
-                RETURNING *
+                RETURNING
+                    id,
+                    property_id,
+                    tenant_id,
+                    unit_number,
+                    unit_description,
+                    start_date,
+                    end_date,
+                    rent_amount,
+                    service_charge_amount,
+                    payment_frequency,
+                    status,
+                    next_rent_due_date,
+                    reminder_6_month_date,
+                    reminder_3_month_date,
+                    last_reviewed_date,
+                    rent_review_note,
+                    occupied_space,
+                    created_at AS "createdAt",
+                    updated_at AS "updatedAt"
             `,
             [id]
         );

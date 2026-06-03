@@ -10,6 +10,8 @@ reminderRoutes.get('/', reminderController.getReminders);
 reminderRoutes.get('/:id', reminderController.getReminder);
 reminderRoutes.post('/', reminderController.createReminder);
 reminderRoutes.put('/:id', reminderController.updateReminder);
+reminderRoutes.put('/:id/mark-sent', reminderController.markSent);
+reminderRoutes.put('/:id/acknowledge', reminderController.acknowledge);
 reminderRoutes.delete('/:id', reminderController.deleteReminder);
 
 export default reminderRoutes;

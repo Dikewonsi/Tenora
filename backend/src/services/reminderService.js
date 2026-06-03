@@ -1,8 +1,43 @@
 import pool from '../db/pool.js';
+import { getPagination } from '../utils/pagination.js';
+
+const reminderColumns = `
+    reminders.id,
+    reminders.lease_id,
+    reminders.service_charge_demand_id,
+    reminders.reminder_type,
+    reminders.due_date,
+    reminders.scheduled_send_date,
+    reminders.sent_date,
+    reminders.channel,
+    reminders.status,
+    reminders.acknowledged,
+    reminders.acknowledged_at,
+    reminders.message_content,
+    reminders.created_at AS "createdAt",
+    reminders.updated_at AS "updatedAt"
+`;
+
+const reminderReturningColumns = `
+    id,
+    lease_id,
+    service_charge_demand_id,
+    reminder_type,
+    due_date,
+    scheduled_send_date,
+    sent_date,
+    channel,
+    status,
+    acknowledged,
+    acknowledged_at,
+    message_content,
+    created_at AS "createdAt",
+    updated_at AS "updatedAt"
+`;
 
 const selectReminderQuery = `
     SELECT
-        reminders.*,
+        ${reminderColumns},
         leases.unit_number,
         properties.property_name,
         tenants.full_name AS tenant_name,
@@ -44,13 +79,57 @@ const ensureReminderLinksAreValid = async (leaseId, demandId) => {
     }
 }
 
-const getAllReminders = async () => {
-    const result = await pool.query(`
-        ${selectReminderQuery}
-        ORDER BY reminders.scheduled_send_date ASC, reminders.created_at DESC
-    `);
+const getAllReminders = async (filters = {}) => {
+    const {
+        lease_id,
+        service_charge_demand_id,
+        reminder_type,
+        status,
+        due_before,
+        due_after
+    } = filters;
+    const pagination = getPagination(filters);
+    const whereClause = `
+        WHERE ($1::uuid IS NULL OR reminders.lease_id = $1)
+          AND ($2::uuid IS NULL OR reminders.service_charge_demand_id = $2)
+          AND ($3::text IS NULL OR reminders.reminder_type = $3)
+          AND ($4::text IS NULL OR reminders.status = $4)
+          AND ($5::date IS NULL OR reminders.due_date <= $5)
+          AND ($6::date IS NULL OR reminders.due_date >= $6)
+    `;
+    const params = [
+        lease_id || null,
+        service_charge_demand_id || null,
+        reminder_type || null,
+        status || null,
+        due_before || null,
+        due_after || null
+    ];
 
-    return result.rows;
+    const result = await pool.query(
+        `
+            ${selectReminderQuery}
+            ${whereClause}
+            ORDER BY reminders.scheduled_send_date ASC, reminders.created_at DESC
+            LIMIT $7 OFFSET $8
+        `,
+        [...params, pagination.limit, pagination.offset]
+    );
+
+    const countResult = await pool.query(
+        `
+            SELECT COUNT(*) AS total
+            FROM reminders
+            ${whereClause}
+        `,
+        params
+    );
+
+    return {
+        reminders: result.rows,
+        total: Number(countResult.rows[0].total),
+        pagination
+    };
 }
 
 const getReminderById = async (id) => {
@@ -113,7 +192,7 @@ const createReminder = async (reminderData) => {
                     message_content
                 )
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, FALSE), $10, $11)
-                RETURNING *
+                RETURNING ${reminderReturningColumns}
             `,
             [
                 lease_id,
@@ -178,7 +257,7 @@ const updateReminder = async (id, reminderData) => {
                     message_content = $11,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = $12
-                RETURNING *
+                RETURNING ${reminderReturningColumns}
             `,
             [
                 lease_id,
@@ -212,7 +291,7 @@ const deleteReminder = async (id) => {
         `
             DELETE FROM reminders
             WHERE id = $1
-            RETURNING *
+            RETURNING ${reminderReturningColumns}
         `,
         [id]
     );
@@ -228,10 +307,62 @@ const deleteReminder = async (id) => {
     return deletedReminder;
 }
 
+const markReminderSent = async (id) => {
+    const result = await pool.query(
+        `
+            UPDATE reminders
+            SET
+                status = 'sent',
+                sent_date = COALESCE(sent_date, CURRENT_TIMESTAMP),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            RETURNING ${reminderReturningColumns}
+        `,
+        [id]
+    );
+
+    const reminder = result.rows[0];
+
+    if(!reminder) {
+        const error = new Error('Reminder not found');
+        error.status = 404;
+        throw error;
+    }
+
+    return reminder;
+}
+
+const acknowledgeReminder = async (id) => {
+    const result = await pool.query(
+        `
+            UPDATE reminders
+            SET
+                acknowledged = TRUE,
+                acknowledged_at = COALESCE(acknowledged_at, CURRENT_TIMESTAMP),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            RETURNING ${reminderReturningColumns}
+        `,
+        [id]
+    );
+
+    const reminder = result.rows[0];
+
+    if(!reminder) {
+        const error = new Error('Reminder not found');
+        error.status = 404;
+        throw error;
+    }
+
+    return reminder;
+}
+
 export default {
     getAllReminders,
     getReminderById,
     createReminder,
     updateReminder,
-    deleteReminder
+    deleteReminder,
+    markReminderSent,
+    acknowledgeReminder
 };

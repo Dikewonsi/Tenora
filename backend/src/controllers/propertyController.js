@@ -1,15 +1,17 @@
 import propertyService from '../services/propertyService.js';
+import { getPaginationMeta } from '../utils/pagination.js';
 
 const getProperties = async (req, res, next) => {
     try {
-        const properties = await propertyService.getAllProperties();
+        const result = await propertyService.getAllProperties(req.query);
 
         res.status(200).json({
             success: true,
             message: 'Properties retrieved successfully',
             data: {
-                count: properties.length,
-                properties
+                count: result.properties.length,
+                pagination: getPaginationMeta(result.total, result.pagination),
+                properties: result.properties
             }
         });
     } catch (error) {

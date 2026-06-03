@@ -6,6 +6,7 @@ import cors from 'cors';
 import notFound from './middleware/notFound.js';
 import errorHandler from './middleware/errorHandler.js';
 
+import healthRoutes from './routes/healthRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import propertyRoutes from './routes/propertyRoutes.js';
 import tenantRoutes from './routes/tenantRoutes.js';
@@ -15,6 +16,7 @@ import serviceChargeDemandRoutes from './routes/serviceChargeDemandRoutes.js';
 import serviceChargeDemandItemRoutes from './routes/serviceChargeDemandItemRoutes.js';
 import reminderRoutes from './routes/reminderRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
+import reportRoutes from './routes/reportRoutes.js';
 
 dotenv.config();
 
@@ -54,6 +56,7 @@ app.use(cors({
 |--------------------------------------------------------------------------
 */
 
+app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/properties', propertyRoutes);
 app.use('/api/tenants', tenantRoutes);
@@ -63,6 +66,7 @@ app.use('/api/service-charge-demands', serviceChargeDemandRoutes);
 app.use('/api/service-charge-demand-items', serviceChargeDemandItemRoutes);
 app.use('/api/reminders', reminderRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/reports', reportRoutes);
 
 /*
 |--------------------------------------------------------------------------

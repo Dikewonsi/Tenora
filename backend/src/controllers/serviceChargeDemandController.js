@@ -1,15 +1,17 @@
 import serviceChargeDemandService from '../services/serviceChargeDemandService.js';
+import { getPaginationMeta } from '../utils/pagination.js';
 
 const getServiceChargeDemands = async (req, res, next) => {
     try {
-        const demands = await serviceChargeDemandService.getAllServiceChargeDemands();
+        const result = await serviceChargeDemandService.getAllServiceChargeDemands(req.query);
 
         res.status(200).json({
             success: true,
             message: 'Service charge demands retrieved successfully',
             data: {
-                count: demands.length,
-                demands
+                count: result.demands.length,
+                pagination: getPaginationMeta(result.total, result.pagination),
+                demands: result.demands
             }
         });
     } catch (error) {

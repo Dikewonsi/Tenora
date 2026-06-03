@@ -25,6 +25,23 @@ const login = async (req, res, next) => {
     }
 }
 
+const me = async (req, res, next) => {
+    try {
+        const user = await authService.getCurrentUser(req.user.id);
+
+        res.status(200).json({
+            success: true,
+            message: 'Current user retrieved successfully',
+            data: {
+                user
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+}
+
 export default {
-    login
+    login,
+    me
 };

@@ -1,15 +1,17 @@
 import leaseService from '../services/leaseService.js';
+import { getPaginationMeta } from '../utils/pagination.js';
 
 const getLeases = async (req, res, next) => {
     try {
-        const leases = await leaseService.getAllLeases();
+        const result = await leaseService.getAllLeases(req.query);
 
         res.status(200).json({
             success: true,
             message: 'Leases retrieved successfully',
             data: {
-                count: leases.length,
-                leases
+                count: result.leases.length,
+                pagination: getPaginationMeta(result.total, result.pagination),
+                leases: result.leases
             }
         });
     } catch (error) {

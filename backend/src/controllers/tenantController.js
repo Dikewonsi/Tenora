@@ -1,15 +1,17 @@
 import tenantService from '../services/tenantService.js';
+import { getPaginationMeta } from '../utils/pagination.js';
 
 const getTenants = async (req, res, next) => {
     try {
-        const tenants = await tenantService.getAllTenants(req.query);
+        const result = await tenantService.getAllTenants(req.query);
 
         res.status(200).json({
             success: true,
             message: 'Tenants retrieved successfully',
             data: {
-                count: tenants.length,
-                tenants
+                count: result.tenants.length,
+                pagination: getPaginationMeta(result.total, result.pagination),
+                tenants: result.tenants
             }
         });
     } catch (error) {

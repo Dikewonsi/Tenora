@@ -1,0 +1,9 @@
+Dashboard should have:
+
+Total Properties
+Total Tenants
+Active Leases
+Rent Arrears
+Outstanding Service Charges
+Leases Expiring in 90 Days
+Pending Reminders

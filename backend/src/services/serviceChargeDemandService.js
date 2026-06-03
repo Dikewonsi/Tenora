@@ -1,8 +1,39 @@
 import pool from '../db/pool.js';
+import { getPagination } from '../utils/pagination.js';
+
+const demandColumns = `
+    service_charge_demands.id,
+    service_charge_demands.property_id,
+    service_charge_demands.lease_id,
+    service_charge_demands.period_start,
+    service_charge_demands.period_end,
+    service_charge_demands.total_amount,
+    service_charge_demands.amount_paid,
+    service_charge_demands.balance,
+    service_charge_demands.due_date,
+    service_charge_demands.status,
+    service_charge_demands.created_at AS "createdAt",
+    service_charge_demands.updated_at AS "updatedAt"
+`;
+
+const demandReturningColumns = `
+    id,
+    property_id,
+    lease_id,
+    period_start,
+    period_end,
+    total_amount,
+    amount_paid,
+    balance,
+    due_date,
+    status,
+    created_at AS "createdAt",
+    updated_at AS "updatedAt"
+`;
 
 const selectDemandQuery = `
     SELECT
-        service_charge_demands.*,
+        ${demandColumns},
         properties.property_name,
         properties.property_code,
         leases.unit_number,
@@ -31,13 +62,40 @@ const ensureLeaseBelongsToProperty = async (leaseId, propertyId) => {
     }
 }
 
-const getAllServiceChargeDemands = async () => {
-    const result = await pool.query(`
-        ${selectDemandQuery}
-        ORDER BY service_charge_demands.created_at DESC
-    `);
+const getAllServiceChargeDemands = async (filters = {}) => {
+    const { property_id, lease_id, status } = filters;
+    const pagination = getPagination(filters);
+    const whereClause = `
+        WHERE ($1::uuid IS NULL OR service_charge_demands.property_id = $1)
+          AND ($2::uuid IS NULL OR service_charge_demands.lease_id = $2)
+          AND ($3::text IS NULL OR service_charge_demands.status = $3)
+    `;
+    const params = [property_id || null, lease_id || null, status || null];
 
-    return result.rows;
+    const result = await pool.query(
+        `
+            ${selectDemandQuery}
+            ${whereClause}
+            ORDER BY service_charge_demands.created_at DESC
+            LIMIT $4 OFFSET $5
+        `,
+        [...params, pagination.limit, pagination.offset]
+    );
+
+    const countResult = await pool.query(
+        `
+            SELECT COUNT(*) AS total
+            FROM service_charge_demands
+            ${whereClause}
+        `,
+        params
+    );
+
+    return {
+        demands: result.rows,
+        total: Number(countResult.rows[0].total),
+        pagination
+    };
 }
 
 const getServiceChargeDemandById = async (id) => {
@@ -99,7 +157,7 @@ const createServiceChargeDemand = async (demandData) => {
                     status
                 )
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                RETURNING *
+                RETURNING ${demandReturningColumns}
             `,
             [
                 property_id,
@@ -161,7 +219,7 @@ const updateServiceChargeDemand = async (id, demandData) => {
                     status = $9,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = $10
-                RETURNING *
+                RETURNING ${demandReturningColumns}
             `,
             [
                 property_id,
@@ -196,7 +254,7 @@ const deleteServiceChargeDemand = async (id) => {
             `
                 DELETE FROM service_charge_demands
                 WHERE id = $1
-                RETURNING *
+                RETURNING ${demandReturningColumns}
             `,
             [id]
         );

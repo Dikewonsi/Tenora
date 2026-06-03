@@ -1,8 +1,43 @@
 import pool from '../db/pool.js';
+import { getPagination } from '../utils/pagination.js';
+
+const paymentColumns = `
+    payments.id,
+    payments.lease_id,
+    payments.service_charge_demand_id,
+    payments.payment_category,
+    payments.amount_paid,
+    payments.payment_date,
+    payments.payment_for_period_start,
+    payments.payment_for_period_end,
+    payments.payment_method,
+    payments.receipt_number,
+    payments.status,
+    payments.notes,
+    payments.created_at AS "createdAt",
+    payments.updated_at AS "updatedAt"
+`;
+
+const paymentReturningColumns = `
+    id,
+    lease_id,
+    service_charge_demand_id,
+    payment_category,
+    amount_paid,
+    payment_date,
+    payment_for_period_start,
+    payment_for_period_end,
+    payment_method,
+    receipt_number,
+    status,
+    notes,
+    created_at AS "createdAt",
+    updated_at AS "updatedAt"
+`;
 
 const selectPaymentQuery = `
     SELECT
-        payments.*,
+        ${paymentColumns},
         leases.unit_number,
         properties.property_name,
         tenants.full_name AS tenant_name
@@ -34,13 +69,48 @@ const ensureDemandBelongsToLease = async (demandId, leaseId) => {
     }
 }
 
-const getAllPayments = async () => {
-    const result = await pool.query(`
-        ${selectPaymentQuery}
-        ORDER BY payments.payment_date DESC, payments.created_at DESC
-    `);
+const getAllPayments = async (filters = {}) => {
+    const { lease_id, payment_category, status, date_from, date_to } = filters;
+    const pagination = getPagination(filters);
+    const whereClause = `
+        WHERE ($1::uuid IS NULL OR payments.lease_id = $1)
+          AND ($2::text IS NULL OR payments.payment_category = $2)
+          AND ($3::text IS NULL OR payments.status = $3)
+          AND ($4::date IS NULL OR payments.payment_date >= $4)
+          AND ($5::date IS NULL OR payments.payment_date <= $5)
+    `;
+    const params = [
+        lease_id || null,
+        payment_category || null,
+        status || null,
+        date_from || null,
+        date_to || null
+    ];
 
-    return result.rows;
+    const result = await pool.query(
+        `
+            ${selectPaymentQuery}
+            ${whereClause}
+            ORDER BY payments.payment_date DESC, payments.created_at DESC
+            LIMIT $6 OFFSET $7
+        `,
+        [...params, pagination.limit, pagination.offset]
+    );
+
+    const countResult = await pool.query(
+        `
+            SELECT COUNT(*) AS total
+            FROM payments
+            ${whereClause}
+        `,
+        params
+    );
+
+    return {
+        payments: result.rows,
+        total: Number(countResult.rows[0].total),
+        pagination
+    };
 }
 
 const getPaymentById = async (id) => {
@@ -103,7 +173,7 @@ const createPayment = async (paymentData) => {
                     notes
                 )
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                RETURNING *
+                RETURNING ${paymentReturningColumns}
             `,
             [
                 lease_id,
@@ -168,7 +238,7 @@ const updatePayment = async (id, paymentData) => {
                     notes = $11,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = $12
-                RETURNING *
+                RETURNING ${paymentReturningColumns}
             `,
             [
                 lease_id,
@@ -202,7 +272,7 @@ const deletePayment = async (id) => {
         `
             DELETE FROM payments
             WHERE id = $1
-            RETURNING *
+            RETURNING ${paymentReturningColumns}
         `,
         [id]
     );

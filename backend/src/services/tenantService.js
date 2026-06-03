@@ -1,11 +1,24 @@
 import pool from '../db/pool.js';
+import { getPagination } from '../utils/pagination.js';
+
+const tenantColumns = `
+    id,
+    full_name,
+    phone_number,
+    email,
+    alternative_contact,
+    id_card_url,
+    created_at AS "createdAt",
+    updated_at AS "updatedAt"
+`;
 
 const getAllTenants = async (filters = {}) => {
     const { search } = filters;
+    const pagination = getPagination(filters);
 
     const result = await pool.query(
         `
-            SELECT *
+            SELECT ${tenantColumns}
             FROM tenants
             WHERE (
                 $1::text IS NULL
@@ -14,17 +27,38 @@ const getAllTenants = async (filters = {}) => {
                 OR phone_number ILIKE '%' || $1 || '%'
             )
             ORDER BY created_at DESC
+            LIMIT $2 OFFSET $3
+        `,
+        [search || null, pagination.limit, pagination.offset]
+    );
+
+    const countResult = await pool.query(
+        `
+            SELECT COUNT(*) AS total
+            FROM tenants
+            WHERE (
+                $1::text IS NULL
+                OR full_name ILIKE '%' || $1 || '%'
+                OR email ILIKE '%' || $1 || '%'
+                OR phone_number ILIKE '%' || $1 || '%'
+            )
         `,
         [search || null]
     );
 
-    return result.rows;
+    return {
+        tenants: result.rows,
+        total: Number(countResult.rows[0].total),
+        pagination
+    };
 }
 
 const getTenantById = async (id) => {
     const result = await pool.query(
         `
-            SELECT * FROM tenants WHERE id = $1
+            SELECT ${tenantColumns}
+            FROM tenants
+            WHERE id = $1
         `,
         [id]
     );
@@ -65,7 +99,7 @@ const createTenant = async (tenantData) => {
                 id_card_url
             )
             VALUES ($1, $2, $3, $4, $5)
-            RETURNING *
+            RETURNING ${tenantColumns}
         `,
         [
             full_name,
@@ -101,7 +135,7 @@ const updateTenant = async (id, tenantData) => {
                 id_card_url = $5,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $6
-            RETURNING *
+            RETURNING ${tenantColumns}
         `,
         [
             full_name,
@@ -124,7 +158,7 @@ const deleteTenant = async (id) => {
             `
                 DELETE FROM tenants
                 WHERE id = $1
-                RETURNING *
+                RETURNING ${tenantColumns}
             `,
             [id]
         );

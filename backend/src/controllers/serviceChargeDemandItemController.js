@@ -1,15 +1,17 @@
 import serviceChargeDemandItemService from '../services/serviceChargeDemandItemService.js';
+import { getPaginationMeta } from '../utils/pagination.js';
 
 const getServiceChargeDemandItems = async (req, res, next) => {
     try {
-        const items = await serviceChargeDemandItemService.getAllServiceChargeDemandItems();
+        const result = await serviceChargeDemandItemService.getAllServiceChargeDemandItems(req.query);
 
         res.status(200).json({
             success: true,
             message: 'Service charge demand items retrieved successfully',
             data: {
-                count: items.length,
-                items
+                count: result.items.length,
+                pagination: getPaginationMeta(result.total, result.pagination),
+                items: result.items
             }
         });
     } catch (error) {

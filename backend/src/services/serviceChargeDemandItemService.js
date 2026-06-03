@@ -1,8 +1,37 @@
 import pool from '../db/pool.js';
+import { getPagination } from '../utils/pagination.js';
+
+const demandItemColumns = `
+    service_charge_demand_items.id,
+    service_charge_demand_items.demand_id,
+    service_charge_demand_items.category,
+    service_charge_demand_items.total_property_cost,
+    service_charge_demand_items.total_lettable_space,
+    service_charge_demand_items.occupied_space,
+    service_charge_demand_items.cost_per_sqm,
+    service_charge_demand_items.tenant_amount,
+    service_charge_demand_items.notes,
+    service_charge_demand_items.created_at AS "createdAt",
+    service_charge_demand_items.updated_at AS "updatedAt"
+`;
+
+const demandItemReturningColumns = `
+    id,
+    demand_id,
+    category,
+    total_property_cost,
+    total_lettable_space,
+    occupied_space,
+    cost_per_sqm,
+    tenant_amount,
+    notes,
+    created_at AS "createdAt",
+    updated_at AS "updatedAt"
+`;
 
 const selectDemandItemQuery = `
     SELECT
-        service_charge_demand_items.*,
+        ${demandItemColumns},
         service_charge_demands.property_id,
         service_charge_demands.lease_id,
         service_charge_demands.period_start,
@@ -29,13 +58,39 @@ const calculateCostPerSqm = (costPerSqm, totalPropertyCost, totalLettableSpace) 
 
 const isMissing = (value) => value === undefined || value === null || value === '';
 
-const getAllServiceChargeDemandItems = async () => {
-    const result = await pool.query(`
-        ${selectDemandItemQuery}
-        ORDER BY service_charge_demand_items.created_at DESC
-    `);
+const getAllServiceChargeDemandItems = async (filters = {}) => {
+    const { demand_id, category } = filters;
+    const pagination = getPagination(filters);
+    const whereClause = `
+        WHERE ($1::uuid IS NULL OR service_charge_demand_items.demand_id = $1)
+          AND ($2::text IS NULL OR service_charge_demand_items.category ILIKE '%' || $2 || '%')
+    `;
+    const params = [demand_id || null, category || null];
 
-    return result.rows;
+    const result = await pool.query(
+        `
+            ${selectDemandItemQuery}
+            ${whereClause}
+            ORDER BY service_charge_demand_items.created_at DESC
+            LIMIT $3 OFFSET $4
+        `,
+        [...params, pagination.limit, pagination.offset]
+    );
+
+    const countResult = await pool.query(
+        `
+            SELECT COUNT(*) AS total
+            FROM service_charge_demand_items
+            ${whereClause}
+        `,
+        params
+    );
+
+    return {
+        items: result.rows,
+        total: Number(countResult.rows[0].total),
+        pagination
+    };
 }
 
 const getServiceChargeDemandItemById = async (id) => {
@@ -99,7 +154,7 @@ const createServiceChargeDemandItem = async (itemData) => {
                     notes
                 )
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                RETURNING *
+                RETURNING ${demandItemReturningColumns}
             `,
             [
                 demand_id,
@@ -155,7 +210,7 @@ const updateServiceChargeDemandItem = async (id, itemData) => {
                     notes = $8,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = $9
-                RETURNING *
+                RETURNING ${demandItemReturningColumns}
             `,
             [
                 demand_id,
@@ -186,7 +241,7 @@ const deleteServiceChargeDemandItem = async (id) => {
         `
             DELETE FROM service_charge_demand_items
             WHERE id = $1
-            RETURNING *
+            RETURNING ${demandItemReturningColumns}
         `,
         [id]
     );

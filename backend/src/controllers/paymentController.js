@@ -1,15 +1,17 @@
 import paymentService from '../services/paymentService.js';
+import { getPaginationMeta } from '../utils/pagination.js';
 
 const getPayments = async (req, res, next) => {
     try {
-        const payments = await paymentService.getAllPayments();
+        const result = await paymentService.getAllPayments(req.query);
 
         res.status(200).json({
             success: true,
             message: 'Payments retrieved successfully',
             data: {
-                count: payments.length,
-                payments
+                count: result.payments.length,
+                pagination: getPaginationMeta(result.total, result.pagination),
+                payments: result.payments
             }
         });
     } catch (error) {

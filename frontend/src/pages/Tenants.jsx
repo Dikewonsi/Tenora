@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  IconAddressBook,
   IconEdit,
   IconId,
+  IconLayoutGrid,
+  IconList,
   IconMail,
   IconPhone,
   IconPlus,
@@ -12,9 +15,11 @@ import {
   IconUsers,
   IconX
 } from '@tabler/icons-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import apiClient from '../api/apiClient';
 import { ConfirmModal, FeedbackModal } from '../components/ActionModal';
 import PaginationControls from '../components/PaginationControls';
+import { EmptyState, PageHeader } from '../components/TenoraUI';
 
 const emptyForm = {
   full_name: '',
@@ -25,14 +30,12 @@ const emptyForm = {
 };
 
 const Tenants = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [tenants, setTenants] = useState([]);
-  const [pagination, setPagination] = useState({
-    page: 1,
-    limit: 10,
-    total: 0,
-    totalPages: 1
-  });
+  const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 1 });
   const [search, setSearch] = useState('');
+  const [view, setView] = useState('cards');
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -45,32 +48,22 @@ const Tenants = () => {
   const [editingTenant, setEditingTenant] = useState(null);
   const [form, setForm] = useState(emptyForm);
 
-  const emerald = '#10b981';
-  const emeraldDark = '#059669';
-  const cardShadow = '0 16px 38px rgba(15, 23, 42, 0.06)';
-
-  const query = useMemo(() => ({
-    page,
-    limit: 10,
-    search
-  }), [page, search]);
+  const query = useMemo(() => ({ page, limit: 10, search }), [page, search]);
+  const summary = useMemo(() => tenants.reduce((totals, tenant) => {
+    if (tenant.phone_number) totals.phone += 1;
+    if (tenant.email) totals.email += 1;
+    if (tenant.id_card_url) totals.documents += 1;
+    if (tenant.phone_number && tenant.email) totals.complete += 1;
+    return totals;
+  }, { phone: 0, email: 0, documents: 0, complete: 0 }), [tenants]);
 
   const fetchTenants = async () => {
     setIsLoading(true);
     setError('');
-
     try {
-      const response = await apiClient.get('/tenants', {
-        params: query
-      });
-
+      const response = await apiClient.get('/tenants', { params: query });
       setTenants(response.data.data.tenants || []);
-      setPagination(response.data.data.pagination || {
-        page,
-        limit: 10,
-        total: 0,
-        totalPages: 1
-      });
+      setPagination(response.data.data.pagination || { page, limit: 10, total: 0, totalPages: 1 });
     } catch (tenantError) {
       setError(tenantError.response?.data?.message || tenantError.message || 'Failed to load tenants');
     } finally {
@@ -79,16 +72,14 @@ const Tenants = () => {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchTenants();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
   const handleFormChange = (event) => {
     const { name, value } = event.target;
-
-    setForm((currentForm) => ({
-      ...currentForm,
-      [name]: value
-    }));
+    setForm((currentForm) => ({ ...currentForm, [name]: value }));
   };
 
   const openCreateModal = () => {
@@ -98,6 +89,15 @@ const Tenants = () => {
     setSuccess('');
     setIsModalOpen(true);
   };
+
+  useEffect(() => {
+    if (location.state?.openCreate === 'tenant') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      openCreateModal();
+      navigate(`${location.pathname}${location.search}`, { replace: true, state: {} });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
 
   const openEditModal = (tenant) => {
     setEditingTenant(tenant);
@@ -124,20 +124,15 @@ const Tenants = () => {
     setIsSaving(true);
     setError('');
     setSuccess('');
-
     try {
       if (editingTenant) {
         await apiClient.put(`/tenants/${editingTenant.id}`, form);
-        const message = 'Tenant updated successfully';
-        setSuccess(message);
-        setFeedbackModal({ variant: 'success', title: 'Tenant saved', message });
       } else {
         await apiClient.post('/tenants', form);
-        const message = 'Tenant created successfully';
-        setSuccess(message);
-        setFeedbackModal({ variant: 'success', title: 'Tenant created', message });
       }
-
+      const message = editingTenant ? 'Tenant updated successfully' : 'Tenant created successfully';
+      setSuccess(message);
+      setFeedbackModal({ variant: 'success', title: editingTenant ? 'Tenant saved' : 'Tenant created', message });
       closeModal();
       await fetchTenants();
     } catch (tenantError) {
@@ -149,309 +144,180 @@ const Tenants = () => {
     }
   };
 
-  const openDeleteModal = (tenant) => {
-    setDeletingTenant(tenant);
-    setError('');
-    setSuccess('');
-  };
-
-  const closeDeleteModal = () => {
-    setDeletingTenant(null);
-  };
-
   const confirmDelete = async () => {
-    if (!deletingTenant) {
-      return;
-    }
-
+    if (!deletingTenant) return;
     setIsDeleting(true);
     setError('');
     setSuccess('');
-
     try {
       await apiClient.delete(`/tenants/${deletingTenant.id}`);
       const message = 'Tenant deleted successfully';
       setSuccess(message);
       setFeedbackModal({ variant: 'success', title: 'Tenant deleted', message });
-      closeDeleteModal();
+      setDeletingTenant(null);
       await fetchTenants();
     } catch (tenantError) {
       const message = tenantError.response?.data?.message || tenantError.message || 'Failed to delete tenant';
-      setError('');
       setFeedbackModal({
         variant: 'danger',
         title: 'Tenant cannot be deleted',
         message,
-        guidance: message.toLowerCase().includes('related') ? 'This protects existing lease, payment, and reminder history from being removed accidentally.' : ''
+        guidance: message.toLowerCase().includes('related') ? 'This protects existing tenancy and payment history from being removed accidentally.' : ''
       });
-      closeDeleteModal();
+      setDeletingTenant(null);
     } finally {
       setIsDeleting(false);
     }
   };
 
-  const handleSearchSubmit = (event) => {
-    event.preventDefault();
+  const resetSearch = () => {
+    setSearch('');
     setPage(1);
-    fetchTenants();
   };
 
   return (
-    <div className="d-grid gap-4">
-      <section
-        className="card border-0 overflow-hidden"
-        style={{
-          borderRadius: 30,
-          background: 'linear-gradient(135deg, #ffffff 0%, #ecfdf5 54%, #d1fae5 100%)',
-          boxShadow: cardShadow
-        }}
-      >
-        <div className="card-body p-4 p-xl-5">
-          <div className="d-flex flex-column flex-xl-row align-items-start align-items-xl-center justify-content-between gap-4">
-            <div>
-              <span className="badge border-0 mb-3 px-3 py-2" style={{ background: '#d1fae5', color: emeraldDark }}>
-                Tenants
-              </span>
-              <h1 className="display-6 fw-bold mb-2" style={{ color: '#101816' }}>
-                Tenant Directory
-              </h1>
-              <p className="fs-3 text-secondary mb-0" style={{ maxWidth: 720 }}>
-                Manage tenant contact records before linking them to leases, payments, reminders, and service charge demands.
-              </p>
-            </div>
+    <div className="tenora-properties tenora-tenants">
+      <PageHeader
+        eyebrow="Occupancy / Tenants"
+        title="Tenants"
+        description="Manage occupant contact records before connecting them to units and tenancies."
+        action={{ label: 'Add Tenant', onClick: openCreateModal, icon: <IconPlus size={18} /> }}
+      />
 
-            <button
-              className="btn btn-lg text-white border-0 d-inline-flex align-items-center gap-2"
-              type="button"
-              onClick={openCreateModal}
-              style={{ background: emerald, borderRadius: 16 }}
-            >
-              <IconPlus size={20} />
-              Add Tenant
-            </button>
+      {error && <div className="alert alert-danger border-0 mb-0" role="alert">{error}</div>}
+      {success && <div className="alert alert-success border-0 mb-0" role="alert">{success}</div>}
+
+      <section className="tenora-tenant-summary" aria-label="Tenant directory summary">
+        <article><span className="tenora-property-summary-icon"><IconUsers size={19} /></span><div><small>Total tenants</small><strong>{isLoading ? '...' : pagination.total || 0}</strong></div></article>
+        <article><span className="tenora-property-summary-icon is-blue"><IconPhone size={19} /></span><div><small>Phone recorded shown</small><strong>{isLoading ? '...' : summary.phone}</strong></div></article>
+        <article><span className="tenora-property-summary-icon is-slate"><IconMail size={19} /></span><div><small>Email recorded shown</small><strong>{isLoading ? '...' : summary.email}</strong></div></article>
+        <article><span className="tenora-property-summary-icon is-amber"><IconId size={19} /></span><div><small>ID documents shown</small><strong>{isLoading ? '...' : summary.documents}</strong></div></article>
+        <article><span className="tenora-property-summary-icon"><IconAddressBook size={19} /></span><div><small>Complete contacts shown</small><strong>{isLoading ? '...' : summary.complete}</strong></div></article>
+      </section>
+
+      <section className="tenora-property-toolbar tenora-tenant-toolbar">
+        <div className="tenora-tenant-filters">
+          <div className="tenora-property-search">
+            <IconSearch size={17} />
+            <input
+              aria-label="Search tenants"
+              placeholder="Search name, email, or phone"
+              value={search}
+              onChange={(event) => { setSearch(event.target.value); setPage(1); }}
+            />
           </div>
+          <button className="btn btn-light border d-inline-flex align-items-center justify-content-center gap-2" type="button" onClick={fetchTenants}><IconRefresh size={16} /> Refresh</button>
+          <button className="btn btn-light border" type="button" onClick={resetSearch}>Reset</button>
+        </div>
+        <div className="tenora-view-toggle" role="group" aria-label="Tenant view">
+          <button className={view === 'cards' ? 'is-active' : ''} type="button" onClick={() => setView('cards')} aria-label="Card view"><IconLayoutGrid size={17} /></button>
+          <button className={view === 'table' ? 'is-active' : ''} type="button" onClick={() => setView('table')} aria-label="Table view"><IconList size={18} /></button>
         </div>
       </section>
 
-      {error && (
-        <div className="alert alert-danger rounded-4 border-0 mb-0" role="alert">
-          {error}
-        </div>
-      )}
+      <section className="tenora-property-workspace">
+        <header>
+          <div><h2>Tenant directory</h2><p>{pagination.total || 0} contact record{pagination.total === 1 ? '' : 's'} found</p></div>
+          <span className="tenora-inventory-context">{search ? 'Search active' : 'All tenants'}</span>
+        </header>
 
-      {success && (
-        <div className="alert alert-success rounded-4 border-0 mb-0" role="alert">
-          {success}
-        </div>
-      )}
-
-      <section className="card border-0" style={{ borderRadius: 26, boxShadow: cardShadow }}>
-        <div className="card-body p-4">
-          <form className="row g-3 align-items-end" onSubmit={handleSearchSubmit}>
-            <div className="col-12 col-lg-9">
-              <label className="form-label">Search</label>
-              <div className="input-icon">
-                <span className="input-icon-addon">
-                  <IconSearch size={18} />
-                </span>
-                <input
-                  className="form-control"
-                  placeholder="Name, email, or phone number"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="col-12 col-lg-3 d-flex gap-2">
-              <button className="btn text-white border-0 flex-fill" type="submit" style={{ background: emerald, borderRadius: 12 }}>
-                Apply
-              </button>
-              <button
-                className="btn btn-light border flex-fill"
-                type="button"
-                onClick={() => {
-                  setSearch('');
-                  setPage(1);
-                }}
-                style={{ borderRadius: 12 }}
-              >
-                Reset
-              </button>
-            </div>
-          </form>
-        </div>
-      </section>
-
-      <section className="card border-0 overflow-hidden" style={{ borderRadius: 26, boxShadow: cardShadow }}>
-        <div className="card-header bg-white border-0 p-4">
-          <div className="d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between gap-3">
-            <div>
-              <h2 className="h3 fw-bold mb-1" style={{ color: '#101816' }}>Tenants</h2>
-              <p className="text-secondary mb-0">
-                {pagination.total} record{pagination.total === 1 ? '' : 's'} found
-              </p>
-            </div>
-            <button className="btn btn-light d-inline-flex align-items-center gap-2" type="button" onClick={fetchTenants} style={{ borderRadius: 12 }}>
-              <IconRefresh size={18} />
-              Refresh
-            </button>
+        {isLoading && view === 'cards' && (
+          <div className="tenora-property-grid tenora-tenant-grid">
+            {Array.from({ length: 6 }, (_, index) => <div className="tenora-property-card tenora-tenant-card is-loading" key={index} />)}
           </div>
-        </div>
+        )}
 
-        <div className="table-responsive">
-          <table className="table table-vcenter card-table mb-0">
-            <thead>
-              <tr>
-                <th>Tenant</th>
-                <th>Phone</th>
-                <th>Email</th>
-                <th>Alternative Contact</th>
-                <th>Created</th>
-                <th className="text-end">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading && (
-                <tr>
-                  <td colSpan="6" className="text-center py-5 text-secondary">
-                    Loading tenants...
-                  </td>
-                </tr>
-              )}
+        {!isLoading && tenants.length === 0 && (
+          <EmptyState
+            title={search ? 'No tenants match this search' : 'No tenants added yet'}
+            description={search ? 'Try another name, email, or phone number.' : 'Add a tenant before creating their tenancy and unit assignment.'}
+            actionLabel={search ? 'Clear search' : 'Add Tenant'}
+            onAction={search ? resetSearch : openCreateModal}
+            icon={IconUsers}
+          />
+        )}
 
-              {!isLoading && tenants.length === 0 && (
-                <tr>
-                  <td colSpan="6" className="text-center py-5 text-secondary">
-                    No tenants found.
-                  </td>
-                </tr>
-              )}
-
-              {!isLoading && tenants.map((tenant) => (
-                <tr key={tenant.id}>
-                  <td>
-                    <div className="d-flex align-items-center gap-3">
-                      <div
-                        className="d-flex align-items-center justify-content-center flex-shrink-0"
-                        style={{ width: 44, height: 44, borderRadius: 14, background: '#d1fae5', color: emeraldDark }}
-                      >
-                        <IconUser size={22} />
-                      </div>
-                      <div>
-                        <div className="fw-semibold" style={{ color: '#101816' }}>
-                          {tenant.full_name}
-                        </div>
-                        <div className="small text-secondary">
-                          {tenant.id_card_url ? 'ID card linked' : 'No ID card linked'}
-                        </div>
-                      </div>
+        {!isLoading && tenants.length > 0 && view === 'cards' && (
+          <div className="tenora-property-grid tenora-tenant-grid">
+            {tenants.map((tenant) => {
+              const completeContact = Boolean(tenant.phone_number && tenant.email);
+              return (
+                <article className="tenora-property-card tenora-tenant-card" key={tenant.id}>
+                  <div className="tenora-property-card-top">
+                    <span className="tenora-tenant-avatar">{String(tenant.full_name || 'T').slice(0, 1).toUpperCase()}</span>
+                    <div className="tenora-property-card-actions">
+                      <button type="button" onClick={() => openEditModal(tenant)} aria-label={`Edit ${tenant.full_name}`}><IconEdit size={16} /></button>
+                      <button className="is-danger" type="button" onClick={() => setDeletingTenant(tenant)} aria-label={`Delete ${tenant.full_name}`}><IconTrash size={16} /></button>
                     </div>
-                  </td>
-                  <td>{tenant.phone_number || '-'}</td>
-                  <td>{tenant.email || '-'}</td>
-                  <td>{tenant.alternative_contact || '-'}</td>
-                  <td>{tenant.createdAt ? new Date(tenant.createdAt).toLocaleDateString() : '-'}</td>
-                  <td className="text-end">
-                    <div className="d-inline-flex gap-2">
-                      <button className="btn btn-sm btn-light" type="button" onClick={() => openEditModal(tenant)} style={{ borderRadius: 10 }}>
-                        <IconEdit size={16} />
-                      </button>
-                      <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => openDeleteModal(tenant)} style={{ borderRadius: 10 }}>
-                        <IconTrash size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                  <div className="tenora-property-card-title">
+                    <h3>{tenant.full_name || 'Unnamed tenant'}</h3>
+                    <p><IconUser size={14} /> Tenant contact record</p>
+                  </div>
+                  <div className="tenora-tenant-contact-list">
+                    <div><IconPhone size={15} /><span><small>Phone</small><strong>{tenant.phone_number || 'Not recorded'}</strong></span></div>
+                    <div><IconMail size={15} /><span><small>Email</small><strong>{tenant.email || 'Not recorded'}</strong></span></div>
+                    <div><IconAddressBook size={15} /><span><small>Alternative contact</small><strong>{tenant.alternative_contact || 'Not recorded'}</strong></span></div>
+                  </div>
+                  <div className="tenora-tenant-readiness">
+                    <span className={completeContact ? 'is-ready' : 'is-warning'}>{completeContact ? 'Contact ready' : 'Contact incomplete'}</span>
+                    <span className={tenant.id_card_url ? 'is-ready' : ''}>{tenant.id_card_url ? 'ID linked' : 'No ID document'}</span>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
 
-        <PaginationControls
-          currentPage={pagination.page || page}
-          totalPages={pagination.totalPages || 1}
-          total={pagination.total || 0}
-          isLoading={isLoading}
-          onPageChange={setPage}
-        />
+        {view === 'table' && (tenants.length > 0 || isLoading) && (
+          <div className="table-responsive tenora-property-table">
+            <table className="table table-vcenter mb-0">
+              <thead><tr><th>Tenant</th><th>Phone</th><th>Email</th><th>Alternative contact</th><th>Document</th><th className="text-end">Actions</th></tr></thead>
+              <tbody>
+                {isLoading ? <tr><td colSpan="6" className="text-center py-5 text-secondary">Loading tenants...</td></tr> : tenants.map((tenant) => (
+                  <tr key={tenant.id}>
+                    <td><div className="d-flex align-items-center gap-3"><span className="tenora-tenant-table-avatar">{String(tenant.full_name || 'T').slice(0, 1).toUpperCase()}</span><div><strong>{tenant.full_name}</strong><small>{tenant.createdAt ? `Added ${new Date(tenant.createdAt).toLocaleDateString('en-NG')}` : ''}</small></div></div></td>
+                    <td>{tenant.phone_number || '-'}</td>
+                    <td>{tenant.email || '-'}</td>
+                    <td>{tenant.alternative_contact || '-'}</td>
+                    <td><span className={`tenora-unit-readiness-pill ${tenant.id_card_url ? 'is-ready' : ''}`}>{tenant.id_card_url ? 'Linked' : 'Not linked'}</span></td>
+                    <td className="text-end"><div className="d-inline-flex gap-2"><button className="btn btn-sm btn-light btn-icon" type="button" onClick={() => openEditModal(tenant)}><IconEdit size={16} /></button><button className="btn btn-sm btn-outline-danger btn-icon" type="button" onClick={() => setDeletingTenant(tenant)}><IconTrash size={16} /></button></div></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {(tenants.length > 0 || isLoading) && <PaginationControls currentPage={pagination.page || page} totalPages={pagination.totalPages || 1} total={pagination.total || 0} isLoading={isLoading} onPageChange={setPage} />}
       </section>
 
       {isModalOpen && (
-        <div
-          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center p-3"
-          style={{ background: 'rgba(15, 23, 42, 0.48)', zIndex: 1050 }}
-        >
-          <form className="card border-0 w-100" onSubmit={handleSubmit} style={{ maxWidth: 720, borderRadius: 26, boxShadow: '0 28px 80px rgba(15, 23, 42, 0.22)' }}>
-            <div className="card-header bg-white border-0 p-4">
-              <div className="d-flex align-items-center justify-content-between gap-3">
-                <div>
-                  <h3 className="fw-bold mb-1" style={{ color: '#101816' }}>
-                    {editingTenant ? 'Edit tenant' : 'Add tenant'}
-                  </h3>
-                  <p className="text-secondary mb-0">Capture tenant contact details for leases and payment tracking.</p>
-                </div>
-                <button className="btn btn-light btn-icon" type="button" onClick={closeModal} style={{ borderRadius: 12 }}>
-                  <IconX size={18} />
-                </button>
+        <div className="tenora-property-modal-backdrop">
+          <form className="tenora-property-modal tenora-tenant-modal" onSubmit={handleSubmit}>
+            <header>
+              <div><span>{editingTenant ? 'Tenant details' : 'New occupant record'}</span><h3>{editingTenant ? 'Edit tenant' : 'Add tenant'}</h3><p>Capture reliable contact details for tenancies, payments, and notices.</p></div>
+              <button className="btn btn-light btn-icon" type="button" onClick={closeModal} aria-label="Close tenant form"><IconX size={18} /></button>
+            </header>
+            <div className="tenora-property-modal-body">
+              <div className="tenora-form-section">
+                <div><strong>Identity</strong><span>The tenant name used throughout Tenora.</span></div>
+                <div><label className="form-label" htmlFor="tenant-name">Full name</label><input id="tenant-name" className="form-control" name="full_name" value={form.full_name} onChange={handleFormChange} placeholder="Test Tenant" required /></div>
               </div>
-            </div>
-
-            <div className="card-body p-4">
-              <div className="row g-3">
-                <div className="col-12">
-                  <label className="form-label">Full name</label>
-                  <div className="input-icon">
-                    <span className="input-icon-addon">
-                      <IconUser size={18} />
-                    </span>
-                    <input className="form-control" name="full_name" value={form.full_name} onChange={handleFormChange} required />
-                  </div>
-                </div>
-                <div className="col-12 col-md-6">
-                  <label className="form-label">Phone number</label>
-                  <div className="input-icon">
-                    <span className="input-icon-addon">
-                      <IconPhone size={18} />
-                    </span>
-                    <input className="form-control" name="phone_number" value={form.phone_number} onChange={handleFormChange} />
-                  </div>
-                </div>
-                <div className="col-12 col-md-6">
-                  <label className="form-label">Email</label>
-                  <div className="input-icon">
-                    <span className="input-icon-addon">
-                      <IconMail size={18} />
-                    </span>
-                    <input className="form-control" name="email" type="email" value={form.email} onChange={handleFormChange} />
-                  </div>
-                </div>
-                <div className="col-12">
-                  <label className="form-label">Alternative contact</label>
-                  <input className="form-control" name="alternative_contact" value={form.alternative_contact} onChange={handleFormChange} placeholder="Name and phone number" />
-                </div>
-                <div className="col-12">
-                  <label className="form-label">ID card URL</label>
-                  <div className="input-icon">
-                    <span className="input-icon-addon">
-                      <IconId size={18} />
-                    </span>
-                    <input className="form-control" name="id_card_url" value={form.id_card_url} onChange={handleFormChange} placeholder="https://example.com/id-card.jpg" />
-                  </div>
+              <div className="tenora-form-section">
+                <div><strong>Contact details</strong><span>Used for rent notices, demands, and payment communication.</span></div>
+                <div className="row g-3">
+                  <div className="col-12 col-md-6"><label className="form-label" htmlFor="tenant-phone">Phone number</label><input id="tenant-phone" className="form-control" name="phone_number" value={form.phone_number} onChange={handleFormChange} placeholder="+234 800 000 0000" /></div>
+                  <div className="col-12 col-md-6"><label className="form-label" htmlFor="tenant-email">Email</label><input id="tenant-email" className="form-control" name="email" type="email" value={form.email} onChange={handleFormChange} placeholder="tenant@example.com" /></div>
+                  <div className="col-12"><label className="form-label" htmlFor="tenant-alternative">Alternative contact</label><input id="tenant-alternative" className="form-control" name="alternative_contact" value={form.alternative_contact} onChange={handleFormChange} placeholder="Name and phone number" /></div>
                 </div>
               </div>
-            </div>
-
-            <div className="card-footer bg-white border-0 p-4">
-              <div className="d-flex justify-content-end gap-2">
-                <button className="btn btn-light" type="button" onClick={closeModal} style={{ borderRadius: 12 }}>
-                  Cancel
-                </button>
-                <button className="btn text-white border-0" type="submit" disabled={isSaving} style={{ background: emerald, borderRadius: 12 }}>
-                  {isSaving ? 'Saving...' : editingTenant ? 'Save changes' : 'Create tenant'}
-                </button>
+              <div className="tenora-form-section">
+                <div><strong>Documentation</strong><span>Optional link to a securely stored identity document.</span></div>
+                <div><label className="form-label" htmlFor="tenant-document">Identity document link</label><input id="tenant-document" className="form-control" name="id_card_url" value={form.id_card_url} onChange={handleFormChange} placeholder="https://secure-document-link" /></div>
               </div>
             </div>
+            <footer><button className="btn btn-light border" type="button" onClick={closeModal}>Cancel</button><button className="btn btn-primary tenora-primary-btn" type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : editingTenant ? 'Save changes' : 'Create tenant'}</button></footer>
           </form>
         </div>
       )}
@@ -459,26 +325,14 @@ const Tenants = () => {
       <ConfirmModal
         isOpen={Boolean(deletingTenant)}
         title="Delete tenant?"
-        message={`This will permanently remove ${deletingTenant?.full_name || 'this tenant'}. This action cannot be undone.`}
-        details={(
-          <>
-            <div className="small text-secondary mb-1">Tenant details</div>
-            <div className="fw-semibold" style={{ color: '#101816' }}>
-              {deletingTenant?.email || 'No email'} · {deletingTenant?.phone_number || 'No phone'}
-            </div>
-          </>
-        )}
+        message={`This will permanently remove ${deletingTenant?.full_name || 'this tenant'}. Linked tenancy records remain protected.`}
+        details={<><div className="small text-secondary mb-1">Tenant details</div><div className="fw-semibold">{deletingTenant?.email || 'No email'} · {deletingTenant?.phone_number || 'No phone'}</div></>}
         confirmLabel="Delete tenant"
         isWorking={isDeleting}
-        onCancel={closeDeleteModal}
+        onCancel={() => setDeletingTenant(null)}
         onConfirm={confirmDelete}
       />
-
-      <FeedbackModal
-        isOpen={Boolean(feedbackModal)}
-        {...(feedbackModal || {})}
-        onClose={() => setFeedbackModal(null)}
-      />
+      <FeedbackModal isOpen={Boolean(feedbackModal)} {...(feedbackModal || {})} onClose={() => setFeedbackModal(null)} />
     </div>
   );
 };

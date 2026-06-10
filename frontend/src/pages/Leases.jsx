@@ -1,23 +1,31 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  IconAlertTriangle,
   IconBuildingEstate,
   IconCalendarEvent,
+  IconCash,
+  IconClock,
   IconEdit,
   IconFileInvoice,
+  IconHome,
+  IconLayoutGrid,
+  IconList,
   IconPlus,
   IconRefresh,
   IconTrash,
-  IconUser,
   IconX
 } from '@tabler/icons-react';
 import apiClient from '../api/apiClient';
 import { ConfirmModal, FeedbackModal } from '../components/ActionModal';
 import PaginationControls from '../components/PaginationControls';
-import { getStatusStyle } from '../utils/statusStyles';
+import { EmptyState, PageHeader, StatusBadge } from '../components/TenoraUI';
+import { propertyLabel, sortByOptionLabel, tenantLabel } from '../utils/sortOptions';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 const emptyForm = {
   property_id: '',
   tenant_id: '',
+  unit_id: '',
   unit_number: '',
   unit_description: '',
   start_date: '',
@@ -26,9 +34,6 @@ const emptyForm = {
   service_charge_amount: '',
   payment_frequency: 'yearly',
   status: 'active',
-  next_rent_due_date: '',
-  reminder_6_month_date: '',
-  reminder_3_month_date: '',
   last_reviewed_date: '',
   rent_review_note: '',
   occupied_space: ''
@@ -37,9 +42,13 @@ const emptyForm = {
 const toDateInput = (value) => (value ? String(value).slice(0, 10) : '');
 
 const Leases = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [leases, setLeases] = useState([]);
   const [properties, setProperties] = useState([]);
   const [tenants, setTenants] = useState([]);
+  const [units, setUnits] = useState([]);
+  const [rentExpiry, setRentExpiry] = useState({ buckets: {}, leases: [] });
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 10,
@@ -49,6 +58,8 @@ const Leases = () => {
   const [propertyId, setPropertyId] = useState('');
   const [tenantId, setTenantId] = useState('');
   const [status, setStatus] = useState('');
+  const [expiryFilter, setExpiryFilter] = useState(() => location.state?.expiryBucket || '');
+  const [view, setView] = useState('cards');
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -61,9 +72,11 @@ const Leases = () => {
   const [editingLease, setEditingLease] = useState(null);
   const [form, setForm] = useState(emptyForm);
 
-  const emerald = '#10b981';
-  const emeraldDark = '#059669';
-  const cardShadow = '0 16px 38px rgba(15, 23, 42, 0.06)';
+  const money = new Intl.NumberFormat('en-NG', {
+    style: 'currency',
+    currency: 'NGN',
+    maximumFractionDigits: 0
+  });
 
   const query = useMemo(() => ({
     page,
@@ -73,14 +86,77 @@ const Leases = () => {
     status
   }), [page, propertyId, status, tenantId]);
 
+  const selectedProperty = useMemo(() => (
+    properties.find((property) => property.id === form.property_id)
+  ), [form.property_id, properties]);
+
+  const selectedTenant = useMemo(() => (
+    tenants.find((tenant) => tenant.id === form.tenant_id)
+  ), [form.tenant_id, tenants]);
+
+  const selectedUnit = useMemo(() => (
+    units.find((unit) => unit.id === form.unit_id)
+  ), [form.unit_id, units]);
+
+  const leaseStats = useMemo(() => {
+    const active = leases.filter((lease) => lease.status === 'active').length;
+    const expiringSoon = leases.filter((lease) => {
+      if (!lease.end_date || lease.status !== 'active') {
+        return false;
+      }
+
+      const today = new Date();
+      const endDate = new Date(lease.end_date);
+      const daysRemaining = Math.ceil((endDate - today) / (1000 * 60 * 60 * 24));
+
+      return daysRemaining >= 0 && daysRemaining <= 90;
+    }).length;
+    const annualRent = leases.reduce((total, lease) => total + Number(lease.rent_amount || 0), 0);
+    const occupiedSpace = leases.reduce((total, lease) => total + Number(lease.occupied_space || 0), 0);
+
+    return {
+      active,
+      expiringSoon,
+      annualRent,
+      occupiedSpace
+    };
+  }, [leases]);
+
+  const getDaysRemaining = (endDateValue) => {
+    if (!endDateValue) {
+      return null;
+    }
+
+    const today = new Date();
+    const endDate = new Date(endDateValue);
+
+    return Math.ceil((endDate - today) / (1000 * 60 * 60 * 24));
+  };
+
+  const filteredExpiryLeases = useMemo(() => {
+    if (!expiryFilter) return rentExpiry.leases || [];
+
+    return (rentExpiry.leases || []).filter((lease) => {
+      const days = Number(lease.days_remaining);
+      if (!Number.isFinite(days)) return false;
+      if (['under30', 'expiring_soon'].includes(expiryFilter)) return days < 30;
+      if (['30', '30_days'].includes(expiryFilter)) return days >= 30 && days < 60;
+      if (['60', '60_days'].includes(expiryFilter)) return days >= 60 && days < 90;
+      if (['90', '90_days'].includes(expiryFilter)) return days >= 90 && days <= 90;
+      return true;
+    });
+  }, [expiryFilter, rentExpiry.leases]);
+
   const fetchLookups = async () => {
-    const [propertiesResponse, tenantsResponse] = await Promise.all([
+    const [propertiesResponse, tenantsResponse, expiryResponse] = await Promise.all([
       apiClient.get('/properties', { params: { limit: 100 } }),
-      apiClient.get('/tenants', { params: { limit: 100 } })
+      apiClient.get('/tenants', { params: { limit: 100 } }),
+      apiClient.get('/leases/rent-expiry')
     ]);
 
-    setProperties(propertiesResponse.data.data.properties || []);
-    setTenants(tenantsResponse.data.data.tenants || []);
+    setProperties(sortByOptionLabel(propertiesResponse.data.data.properties || [], propertyLabel));
+    setTenants(sortByOptionLabel(tenantsResponse.data.data.tenants || [], tenantLabel));
+    setRentExpiry(expiryResponse.data.data || { buckets: {}, leases: [] });
   };
 
   const fetchLeases = async () => {
@@ -100,28 +176,49 @@ const Leases = () => {
         totalPages: 1
       });
     } catch (leaseError) {
-      setError(leaseError.response?.data?.message || leaseError.message || 'Failed to load leases');
+      setError(leaseError.response?.data?.message || leaseError.message || 'Failed to load tenancies');
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchLookups().catch((lookupError) => {
       setError(lookupError.response?.data?.message || lookupError.message || 'Failed to load properties and tenants');
     });
   }, []);
 
   useEffect(() => {
+    if (!form.property_id) {
+      return;
+    }
+
+    apiClient.get('/units', { params: { property_id: form.property_id, status: 'active', limit: 100 } })
+      .then((response) => setUnits(response.data.data.units || []))
+      .catch((lookupError) => {
+        setError(lookupError.response?.data?.message || lookupError.message || 'Failed to load property units');
+      });
+  }, [form.property_id]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchLeases();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
   const handleFormChange = (event) => {
     const { name, value } = event.target;
+    const nextUnit = name === 'unit_id' ? units.find((unit) => unit.id === value) : null;
 
     setForm((currentForm) => ({
       ...currentForm,
-      [name]: value
+      [name]: value,
+      ...(name === 'property_id' ? { unit_id: '', unit_number: '', occupied_space: '' } : {}),
+      ...(name === 'unit_id' ? {
+        unit_number: nextUnit?.unit_name || '',
+        occupied_space: nextUnit?.floor_area_sqm ?? ''
+      } : {})
     }));
   };
 
@@ -133,11 +230,29 @@ const Leases = () => {
     setIsModalOpen(true);
   };
 
+  useEffect(() => {
+    if (location.state?.openCreate === 'tenancy') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      openCreateModal();
+      navigate(`${location.pathname}${location.search}`, { replace: true, state: {} });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
+
+  useEffect(() => {
+    if (location.state?.expiryBucket) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setExpiryFilter(location.state.expiryBucket);
+      navigate(`${location.pathname}${location.search}`, { replace: true, state: {} });
+    }
+  }, [location.key, location.pathname, location.search, location.state, navigate]);
+
   const openEditModal = (lease) => {
     setEditingLease(lease);
     setForm({
       property_id: lease.property_id || '',
       tenant_id: lease.tenant_id || '',
+      unit_id: lease.unit_id || '',
       unit_number: lease.unit_number || '',
       unit_description: lease.unit_description || '',
       start_date: toDateInput(lease.start_date),
@@ -146,9 +261,6 @@ const Leases = () => {
       service_charge_amount: lease.service_charge_amount || '',
       payment_frequency: lease.payment_frequency || 'yearly',
       status: lease.status || 'active',
-      next_rent_due_date: toDateInput(lease.next_rent_due_date),
-      reminder_6_month_date: toDateInput(lease.reminder_6_month_date),
-      reminder_3_month_date: toDateInput(lease.reminder_3_month_date),
       last_reviewed_date: toDateInput(lease.last_reviewed_date),
       rent_review_note: lease.rent_review_note || '',
       occupied_space: lease.occupied_space || ''
@@ -171,10 +283,7 @@ const Leases = () => {
     ...form,
     rent_amount: nullableNumber(form.rent_amount),
     service_charge_amount: nullableNumber(form.service_charge_amount),
-    occupied_space: nullableNumber(form.occupied_space),
-    next_rent_due_date: nullableDate(form.next_rent_due_date),
-    reminder_6_month_date: nullableDate(form.reminder_6_month_date),
-    reminder_3_month_date: nullableDate(form.reminder_3_month_date),
+    occupied_space: selectedUnit?.floor_area_sqm ?? nullableNumber(form.occupied_space),
     last_reviewed_date: nullableDate(form.last_reviewed_date)
   });
 
@@ -187,22 +296,22 @@ const Leases = () => {
     try {
       if (editingLease) {
         await apiClient.put(`/leases/${editingLease.id}`, getPayload());
-        const message = 'Lease updated successfully';
+        const message = 'Tenancy updated successfully';
         setSuccess(message);
-        setFeedbackModal({ variant: 'success', title: 'Lease saved', message });
+        setFeedbackModal({ variant: 'success', title: 'Tenancy saved', message });
       } else {
         await apiClient.post('/leases', getPayload());
-        const message = 'Lease created successfully';
+        const message = 'Tenancy created successfully';
         setSuccess(message);
-        setFeedbackModal({ variant: 'success', title: 'Lease created', message });
+        setFeedbackModal({ variant: 'success', title: 'Tenancy created', message });
       }
 
       closeModal();
-      await fetchLeases();
+      await Promise.all([fetchLeases(), fetchLookups()]);
     } catch (leaseError) {
-      const message = leaseError.response?.data?.message || leaseError.message || 'Failed to save lease';
+      const message = leaseError.response?.data?.message || leaseError.message || 'Failed to save tenancy';
       setError(message);
-      setFeedbackModal({ variant: 'danger', title: 'Lease could not be saved', message });
+      setFeedbackModal({ variant: 'danger', title: 'Tenancy could not be saved', message });
     } finally {
       setIsSaving(false);
     }
@@ -229,19 +338,19 @@ const Leases = () => {
 
     try {
       await apiClient.delete(`/leases/${deletingLease.id}`);
-      const message = 'Lease deleted successfully';
+      const message = 'Tenancy deleted successfully';
       setSuccess(message);
-      setFeedbackModal({ variant: 'success', title: 'Lease deleted', message });
+      setFeedbackModal({ variant: 'success', title: 'Tenancy deleted', message });
       closeDeleteModal();
       await fetchLeases();
     } catch (leaseError) {
-      const message = leaseError.response?.data?.message || leaseError.message || 'Failed to delete lease';
+      const message = leaseError.response?.data?.message || leaseError.message || 'Failed to delete tenancy';
       setError('');
       setFeedbackModal({
         variant: 'danger',
-        title: 'Lease cannot be deleted',
+        title: 'Tenancy cannot be deleted',
         message,
-        guidance: message.toLowerCase().includes('related') ? 'This protects related payments, service charge demands, and reminders from losing their lease history.' : ''
+        guidance: message.toLowerCase().includes('related') ? 'This protects related payments and service charge demands from losing their tenancy history.' : ''
       });
       closeDeleteModal();
     } finally {
@@ -255,386 +364,187 @@ const Leases = () => {
     fetchLeases();
   };
 
+  const resetFilters = () => {
+    setPropertyId('');
+    setTenantId('');
+    setStatus('');
+    setPage(1);
+  };
+
   return (
-    <div className="d-grid gap-4">
-      <section
-        className="card border-0 overflow-hidden"
-        style={{
-          borderRadius: 30,
-          background: 'linear-gradient(135deg, #ffffff 0%, #ecfdf5 54%, #d1fae5 100%)',
-          boxShadow: cardShadow
-        }}
-      >
-        <div className="card-body p-4 p-xl-5">
-          <div className="d-flex flex-column flex-xl-row align-items-start align-items-xl-center justify-content-between gap-4">
-            <div>
-              <span className="badge border-0 mb-3 px-3 py-2" style={{ background: '#d1fae5', color: emeraldDark }}>
-                Leases
-              </span>
-              <h1 className="display-6 fw-bold mb-2" style={{ color: '#101816' }}>
-                Lease Register
-              </h1>
-              <p className="fs-3 text-secondary mb-0" style={{ maxWidth: 760 }}>
-                Connect tenants to properties, track unit details, rent values, service charges, and renewal dates.
-              </p>
-            </div>
+    <div className="tenora-properties tenora-leases">
+      <PageHeader
+        eyebrow="Occupancy / Tenancies"
+        title="Tenancies"
+        description="Manage unit assignments, rent terms, expiry dates, and occupancy status."
+        action={{ label: 'Add Tenancy', onClick: openCreateModal, icon: <IconPlus size={18} /> }}
+      />
 
-            <button
-              className="btn btn-lg text-white border-0 d-inline-flex align-items-center gap-2"
-              type="button"
-              onClick={openCreateModal}
-              style={{ background: emerald, borderRadius: 16 }}
-            >
-              <IconPlus size={20} />
-              Add Lease
-            </button>
+      {error && <div className="alert alert-danger border-0 mb-0" role="alert">{error}</div>}
+      {success && <div className="alert alert-success border-0 mb-0" role="alert">{success}</div>}
+
+      <section className="tenora-lease-summary" aria-label="Tenancy summary">
+        <article><span className="tenora-property-summary-icon"><IconFileInvoice size={19} /></span><div><small>Active shown</small><strong>{isLoading ? '...' : leaseStats.active}</strong></div></article>
+        <article><span className="tenora-property-summary-icon is-amber"><IconClock size={19} /></span><div><small>Expiring within 90 days</small><strong>{isLoading ? '...' : (rentExpiry.leases || []).length}</strong></div></article>
+        <article><span className="tenora-property-summary-icon is-blue"><IconCash size={19} /></span><div><small>Rent value shown</small><strong>{isLoading ? '...' : money.format(leaseStats.annualRent)}</strong></div></article>
+        <article><span className="tenora-property-summary-icon is-slate"><IconHome size={19} /></span><div><small>Occupied space shown</small><strong>{isLoading ? '...' : `${leaseStats.occupiedSpace.toLocaleString()} sqm`}</strong></div></article>
+        <article><span className="tenora-property-summary-icon"><IconFileInvoice size={19} /></span><div><small>Total tenancies</small><strong>{isLoading ? '...' : pagination.total || 0}</strong></div></article>
+      </section>
+
+      <section className="tenora-expiry-workspace">
+        <header>
+          <div><h2>Rent expiry</h2><p>End date is the next rent due date.</p></div>
+          {expiryFilter && <button className="btn btn-sm btn-light border" type="button" onClick={() => setExpiryFilter('')}>Clear expiry filter</button>}
+        </header>
+        <div className="tenora-expiry-layout">
+          <div className="tenora-expiry-buckets">
+            {[
+              ['Expiring Soon', 'expiring_soon', 'under30', 'is-red'],
+              ['30 Days', '30_days', '30', 'is-orange'],
+              ['60 Days', '60_days', '60', 'is-amber'],
+              ['90 Days', '90_days', '90', 'is-blue']
+            ].map(([label, key, filter, tone]) => (
+              <button className={`${tone} ${expiryFilter === filter ? 'is-selected' : ''}`} type="button" key={key} onClick={() => setExpiryFilter((current) => current === filter ? '' : filter)}>
+                <span>{label}</span><strong>{rentExpiry.buckets?.[key]?.length || 0}</strong>
+              </button>
+            ))}
+          </div>
+          <div className="tenora-expiry-list">
+            {filteredExpiryLeases.slice(0, 5).map((lease) => (
+              <div key={lease.id}>
+                <span className="tenora-expiry-avatar"><IconCalendarEvent size={16} /></span>
+                <span><strong>{lease.tenant_name}</strong><small>{lease.property_name} · {lease.unit_name || 'No unit'}</small></span>
+                <span><strong>{lease.days_remaining} days</strong><small>{toDateInput(lease.end_date)}</small></span>
+              </div>
+            ))}
+            {filteredExpiryLeases.length === 0 && <EmptyState compact title="No matching rent expiries" description="Active tenancies ending in this period will appear here." icon={IconCalendarEvent} />}
           </div>
         </div>
       </section>
 
-      {error && (
-        <div className="alert alert-danger rounded-4 border-0 mb-0" role="alert">
-          {error}
-        </div>
-      )}
-
-      {success && (
-        <div className="alert alert-success rounded-4 border-0 mb-0" role="alert">
-          {success}
-        </div>
-      )}
-
-      <section className="card border-0" style={{ borderRadius: 26, boxShadow: cardShadow }}>
-        <div className="card-body p-4">
-          <form className="row g-3 align-items-end" onSubmit={handleFilterSubmit}>
-            <div className="col-12 col-lg-4">
-              <label className="form-label">Property</label>
-              <select className="form-select" value={propertyId} onChange={(event) => setPropertyId(event.target.value)}>
-                <option value="">All properties</option>
-                {properties.map((property) => (
-                  <option key={property.id} value={property.id}>
-                    {property.property_name || property.address}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="col-12 col-lg-4">
-              <label className="form-label">Tenant</label>
-              <select className="form-select" value={tenantId} onChange={(event) => setTenantId(event.target.value)}>
-                <option value="">All tenants</option>
-                {tenants.map((tenant) => (
-                  <option key={tenant.id} value={tenant.id}>
-                    {tenant.full_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="col-12 col-lg-2">
-              <label className="form-label">Status</label>
-              <select className="form-select" value={status} onChange={(event) => setStatus(event.target.value)}>
-                <option value="">All</option>
-                <option value="active">Active</option>
-                <option value="expired">Expired</option>
-                <option value="terminated">Terminated</option>
-              </select>
-            </div>
-
-            <div className="col-12 col-lg-2 d-flex gap-2">
-              <button className="btn text-white border-0 flex-fill" type="submit" style={{ background: emerald, borderRadius: 12 }}>
-                Apply
-              </button>
-              <button
-                className="btn btn-light border flex-fill"
-                type="button"
-                onClick={() => {
-                  setPropertyId('');
-                  setTenantId('');
-                  setStatus('');
-                  setPage(1);
-                }}
-                style={{ borderRadius: 12 }}
-              >
-                Reset
-              </button>
-            </div>
-          </form>
+      <section className="tenora-property-toolbar tenora-lease-toolbar">
+        <form className="tenora-lease-filters" onSubmit={handleFilterSubmit}>
+          <select className="form-select" value={propertyId} onChange={(event) => setPropertyId(event.target.value)} aria-label="Filter by property">
+            <option value="">All properties</option>
+            {properties.map((property) => <option key={property.id} value={property.id}>{property.property_name || property.address}</option>)}
+          </select>
+          <select className="form-select" value={tenantId} onChange={(event) => setTenantId(event.target.value)} aria-label="Filter by tenant">
+            <option value="">All tenants</option>
+            {tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.full_name}</option>)}
+          </select>
+          <select className="form-select" value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filter by status">
+            <option value="">All statuses</option><option value="active">Active</option><option value="expired">Expired</option><option value="terminated">Terminated</option>
+          </select>
+          <button className="btn btn-primary tenora-primary-btn" type="submit">Apply</button>
+          <button className="btn btn-light border" type="button" onClick={resetFilters}>Reset</button>
+          <button className="btn btn-light border d-inline-flex align-items-center justify-content-center gap-2" type="button" onClick={fetchLeases}><IconRefresh size={16} /> Refresh</button>
+        </form>
+        <div className="tenora-view-toggle" role="group" aria-label="Tenancy view">
+          <button className={view === 'cards' ? 'is-active' : ''} type="button" onClick={() => setView('cards')} aria-label="Card view"><IconLayoutGrid size={17} /></button>
+          <button className={view === 'table' ? 'is-active' : ''} type="button" onClick={() => setView('table')} aria-label="Table view"><IconList size={18} /></button>
         </div>
       </section>
 
-      <section className="card border-0 overflow-hidden" style={{ borderRadius: 26, boxShadow: cardShadow }}>
-        <div className="card-header bg-white border-0 p-4">
-          <div className="d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between gap-3">
-            <div>
-              <h2 className="h3 fw-bold mb-1" style={{ color: '#101816' }}>Leases</h2>
-              <p className="text-secondary mb-0">
-                {pagination.total} record{pagination.total === 1 ? '' : 's'} found
-              </p>
-            </div>
-            <button className="btn btn-light d-inline-flex align-items-center gap-2" type="button" onClick={fetchLeases} style={{ borderRadius: 12 }}>
-              <IconRefresh size={18} />
-              Refresh
-            </button>
+      <section className="tenora-property-workspace">
+        <header><div><h2>Tenancy inventory</h2><p>{pagination.total || 0} record{pagination.total === 1 ? '' : 's'} match the current filters</p></div><span className="tenora-inventory-context">{propertyId || tenantId || status ? 'Filters active' : 'All tenancies'}</span></header>
+
+        {isLoading && view === 'cards' && <div className="tenora-property-grid tenora-lease-grid">{Array.from({ length: 6 }, (_, index) => <div className="tenora-property-card tenora-lease-card is-loading" key={index} />)}</div>}
+
+        {!isLoading && leases.length === 0 && (
+          <EmptyState title="No tenancies found" description="Create a tenancy after adding a property, unit, and tenant." actionLabel="Add Tenancy" onAction={openCreateModal} icon={IconFileInvoice} />
+        )}
+
+        {!isLoading && leases.length > 0 && view === 'cards' && (
+          <div className="tenora-property-grid tenora-lease-grid">
+            {leases.map((lease) => {
+              const daysRemaining = getDaysRemaining(lease.end_date);
+              const expiring = lease.status === 'active' && daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 90;
+              return (
+                <article className="tenora-property-card tenora-lease-card" key={lease.id}>
+                  <div className="tenora-property-card-top">
+                    <span className="tenora-property-avatar"><IconFileInvoice size={22} /></span>
+                    <div className="d-flex align-items-center gap-2"><StatusBadge status={lease.status || 'active'} /><div className="tenora-property-card-actions"><button type="button" onClick={() => openEditModal(lease)} aria-label={`Edit tenancy for ${lease.tenant_name}`}><IconEdit size={16} /></button><button className="is-danger" type="button" onClick={() => openDeleteModal(lease)} aria-label={`Delete tenancy for ${lease.tenant_name}`}><IconTrash size={16} /></button></div></div>
+                  </div>
+                  <div className="tenora-property-card-title"><h3>{lease.tenant_name || 'Tenant'}</h3><p><IconBuildingEstate size={14} /> {lease.property_name || 'Property'} · {lease.unit_name || lease.unit_number || 'No unit'}</p></div>
+                  {expiring && <div className="tenora-lease-alert"><IconAlertTriangle size={15} /> Rent due in {daysRemaining} day{daysRemaining === 1 ? '' : 's'}</div>}
+                  <div className="tenora-lease-term">
+                    <div><small>Start date</small><strong>{toDateInput(lease.start_date) || '-'}</strong></div>
+                    <IconCalendarEvent size={16} />
+                    <div><small>End date / next rent due</small><strong>{toDateInput(lease.end_date) || '-'}</strong></div>
+                  </div>
+                  <div className="tenora-lease-finance">
+                    <div><small>Rent</small><strong>{money.format(Number(lease.rent_amount || 0))}</strong><span className="text-capitalize">{lease.payment_frequency || 'yearly'}</span></div>
+                    <div><small>Floor area</small><strong>{Number(lease.occupied_space || lease.floor_area_sqm || 0).toLocaleString()} sqm</strong><span>{lease.unit_description || 'No description'}</span></div>
+                  </div>
+                </article>
+              );
+            })}
           </div>
-        </div>
+        )}
 
-        <div className="table-responsive">
-          <table className="table table-vcenter card-table mb-0">
-            <thead>
-              <tr>
-                <th>Lease</th>
-                <th>Property</th>
-                <th>Period</th>
-                <th>Rent</th>
-                <th>Service Charge</th>
-                <th>Status</th>
-                <th className="text-end">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading && (
-                <tr>
-                  <td colSpan="7" className="text-center py-5 text-secondary">
-                    Loading leases...
-                  </td>
-                </tr>
-              )}
-
-              {!isLoading && leases.length === 0 && (
-                <tr>
-                  <td colSpan="7" className="text-center py-5 text-secondary">
-                    No leases found.
-                  </td>
-                </tr>
-              )}
-
-              {!isLoading && leases.map((lease) => (
+        {view === 'table' && (leases.length > 0 || isLoading) && (
+          <div className="table-responsive tenora-property-table tenora-lease-table">
+            <table className="table table-vcenter mb-0">
+              <thead><tr><th>Tenant / Unit</th><th>Property</th><th>Term</th><th>Rent</th><th>Space</th><th>Status</th><th className="text-end">Actions</th></tr></thead>
+              <tbody>{isLoading ? <tr><td colSpan="7" className="text-center py-5 text-secondary">Loading tenancies...</td></tr> : leases.map((lease) => (
                 <tr key={lease.id}>
-                  <td>
-                    <div className="d-flex align-items-center gap-3">
-                      <div
-                        className="d-flex align-items-center justify-content-center flex-shrink-0"
-                        style={{ width: 44, height: 44, borderRadius: 14, background: '#d1fae5', color: emeraldDark }}
-                      >
-                        <IconFileInvoice size={22} />
-                      </div>
-                      <div>
-                        <div className="fw-semibold" style={{ color: '#101816' }}>
-                          {lease.tenant_name || 'Tenant'}
-                        </div>
-                        <div className="small text-secondary">
-                          {lease.unit_number || 'No unit'} · {lease.unit_description || 'No description'}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
+                  <td><div className="d-flex align-items-center gap-3"><span className="tenora-property-table-icon"><IconFileInvoice size={18} /></span><div><strong>{lease.tenant_name || 'Tenant'}</strong><small>{lease.unit_name || lease.unit_number || 'No unit'}</small></div></div></td>
                   <td>{lease.property_name || '-'}</td>
-                  <td>
-                    {toDateInput(lease.start_date) || '-'} to {toDateInput(lease.end_date) || '-'}
-                  </td>
-                  <td>{lease.rent_amount ? Number(lease.rent_amount).toLocaleString() : '0'}</td>
-                  <td>{lease.service_charge_amount ? Number(lease.service_charge_amount).toLocaleString() : '0'}</td>
-                  <td>
-                    <span className="badge text-capitalize" style={getStatusStyle(lease.status || 'active')}>
-                      {lease.status || 'active'}
-                    </span>
-                  </td>
-                  <td className="text-end">
-                    <div className="d-inline-flex gap-2">
-                      <button className="btn btn-sm btn-light" type="button" onClick={() => openEditModal(lease)} style={{ borderRadius: 10 }}>
-                        <IconEdit size={16} />
-                      </button>
-                      <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => openDeleteModal(lease)} style={{ borderRadius: 10 }}>
-                        <IconTrash size={16} />
-                      </button>
-                    </div>
-                  </td>
+                  <td><strong>{toDateInput(lease.start_date)} to {toDateInput(lease.end_date)}</strong><small className="text-capitalize">{lease.payment_frequency || 'yearly'} billing</small></td>
+                  <td>{money.format(Number(lease.rent_amount || 0))}</td>
+                  <td>{Number(lease.occupied_space || lease.floor_area_sqm || 0).toLocaleString()} sqm</td>
+                  <td><StatusBadge status={lease.status || 'active'} /></td>
+                  <td className="text-end"><div className="d-inline-flex gap-2"><button className="btn btn-sm btn-light btn-icon" type="button" onClick={() => openEditModal(lease)}><IconEdit size={16} /></button><button className="btn btn-sm btn-outline-danger btn-icon" type="button" onClick={() => openDeleteModal(lease)}><IconTrash size={16} /></button></div></td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <PaginationControls
-          currentPage={pagination.page || page}
-          totalPages={pagination.totalPages || 1}
-          total={pagination.total || 0}
-          isLoading={isLoading}
-          onPageChange={setPage}
-        />
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+        {(leases.length > 0 || isLoading) && <PaginationControls currentPage={pagination.page || page} totalPages={pagination.totalPages || 1} total={pagination.total || 0} isLoading={isLoading} onPageChange={setPage} />}
       </section>
 
       {isModalOpen && (
-        <div
-          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-start align-items-lg-center justify-content-center p-2 p-sm-3"
-          style={{ background: 'rgba(15, 23, 42, 0.48)', zIndex: 1050, overflowY: 'auto' }}
-        >
-          <form
-            className="card border-0 w-100 my-2 my-lg-0"
-            onSubmit={handleSubmit}
-            style={{
-              maxWidth: 980,
-              maxHeight: 'calc(100vh - 24px)',
-              overflow: 'hidden',
-              borderRadius: 26,
-              boxShadow: '0 28px 80px rgba(15, 23, 42, 0.22)'
-            }}
-          >
-            <div className="card-header bg-white border-0 p-3 p-sm-4">
-              <div className="d-flex align-items-start justify-content-between gap-3">
-                <div style={{ minWidth: 0 }}>
-                  <h3 className="fw-bold mb-1" style={{ color: '#101816' }}>
-                    {editingLease ? 'Edit lease' : 'Add lease'}
-                  </h3>
-                  <p className="text-secondary mb-0">Connect a tenant to a property and define lease terms.</p>
+        <div className="tenora-property-modal-backdrop">
+          <form className="tenora-property-modal tenora-lease-modal" onSubmit={handleSubmit}>
+            <header><div><span>{editingLease ? 'Tenancy details' : 'New occupancy assignment'}</span><h3>{editingLease ? 'Edit tenancy' : 'Add tenancy'}</h3><p>Connect a tenant to a property and unit, then set rent and expiry terms.</p></div><button className="btn btn-light btn-icon" type="button" onClick={closeModal} aria-label="Close tenancy form"><IconX size={18} /></button></header>
+            <div className="tenora-property-modal-body">
+              {(selectedProperty || selectedTenant) && <div className="tenora-lease-selection"><div><small>Property</small><strong>{selectedProperty?.property_name || selectedProperty?.address || 'Select property'}</strong><span>{selectedProperty?.total_lettable_space ? `${Number(selectedProperty.total_lettable_space).toLocaleString()} sqm lettable space` : 'No lettable space recorded'}</span></div><div><small>Tenant</small><strong>{selectedTenant?.full_name || 'Select tenant'}</strong><span>{selectedTenant?.email || selectedTenant?.phone_number || 'No contact recorded'}</span></div></div>}
+              <div className="tenora-form-section">
+                <div><strong>Assignment</strong><span>Connect the tenant to an active unit under the selected property.</span></div>
+                <div className="row g-3">
+                  <div className="col-12 col-md-6"><label className="form-label">Property</label><select className="form-select" name="property_id" value={form.property_id} onChange={handleFormChange} required><option value="">Select property</option>{properties.map((property) => <option key={property.id} value={property.id}>{property.property_name || property.address}</option>)}</select></div>
+                  <div className="col-12 col-md-6"><label className="form-label">Tenant</label><select className="form-select" name="tenant_id" value={form.tenant_id} onChange={handleFormChange} required><option value="">Select tenant</option>{tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.full_name}</option>)}</select></div>
+                  <div className="col-12 col-md-5"><label className="form-label">Unit</label><select className="form-select" name="unit_id" value={form.unit_id} onChange={handleFormChange} required><option value="">{form.property_id ? 'Select unit' : 'Select property first'}</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.unit_name}{unit.tenant_name ? ` · occupied by ${unit.tenant_name}` : ''}</option>)}</select>{form.property_id && units.length === 0 && <div className="form-text text-warning">No active units found under this property.</div>}</div>
+                  <div className="col-12 col-md-7"><label className="form-label">Unit description</label><input className="form-control" name="unit_description" value={form.unit_description} onChange={handleFormChange} placeholder="Second floor office space" /></div>
                 </div>
-                <button className="btn btn-light btn-icon flex-shrink-0" type="button" onClick={closeModal} style={{ borderRadius: 12 }}>
-                  <IconX size={18} />
-                </button>
               </div>
-            </div>
-
-            <div className="card-body p-3 p-sm-4" style={{ overflowY: 'auto' }}>
-              <div className="row g-3">
-                <div className="col-12 col-md-6">
-                  <label className="form-label">Property</label>
-                  <div className="d-flex align-items-center gap-2 mb-2 text-secondary small">
-                    <span className="d-flex align-items-center justify-content-center" style={{ width: 28, height: 28, borderRadius: 10, background: '#ecfdf5', color: emeraldDark }}>
-                      <IconBuildingEstate size={18} />
-                    </span>
-                    <span>Choose the property this lease belongs to</span>
-                  </div>
-                  <select className="form-select" name="property_id" value={form.property_id} onChange={handleFormChange} required>
-                    <option value="">Select property</option>
-                    {properties.map((property) => (
-                      <option key={property.id} value={property.id}>
-                        {property.property_name || property.address}
-                      </option>
-                    ))}
-                  </select>
+              <div className="tenora-form-section">
+                <div><strong>Term and rent</strong><span>End date is also the next rent due date for this MVP.</span></div>
+                <div className="row g-3">
+                  <div className="col-12 col-md-6"><label className="form-label">Start date</label><input className="form-control" name="start_date" type="date" value={form.start_date} onChange={handleFormChange} required /></div>
+                  <div className="col-12 col-md-6"><label className="form-label">End Date / Next Rent Due Date</label><input className="form-control" name="end_date" type="date" value={form.end_date} onChange={handleFormChange} required /></div>
+                  <div className="col-12 col-md-4"><label className="form-label">Rent amount</label><input className="form-control" name="rent_amount" type="number" min="0" step="0.01" value={form.rent_amount} onChange={handleFormChange} /></div>
+                  <div className="col-12 col-md-4"><label className="form-label">Frequency</label><select className="form-select" name="payment_frequency" value={form.payment_frequency} onChange={handleFormChange}><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></select></div>
+                  <div className="col-12 col-md-4"><label className="form-label">Unit floor area</label><input className="form-control" type="text" value={selectedUnit?.floor_area_sqm === null || selectedUnit?.floor_area_sqm === undefined ? 'Not entered' : `${Number(selectedUnit.floor_area_sqm).toLocaleString()} sqm`} readOnly /></div>
                 </div>
-                <div className="col-12 col-md-6">
-                  <label className="form-label">Tenant</label>
-                  <div className="d-flex align-items-center gap-2 mb-2 text-secondary small">
-                    <span className="d-flex align-items-center justify-content-center" style={{ width: 28, height: 28, borderRadius: 10, background: '#ecfdf5', color: emeraldDark }}>
-                      <IconUser size={18} />
-                    </span>
-                    <span>Choose the tenant occupying the unit</span>
-                  </div>
-                  <select className="form-select" name="tenant_id" value={form.tenant_id} onChange={handleFormChange} required>
-                    <option value="">Select tenant</option>
-                    {tenants.map((tenant) => (
-                      <option key={tenant.id} value={tenant.id}>
-                        {tenant.full_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="col-12 col-sm-6 col-lg-4">
-                  <label className="form-label">Unit number</label>
-                  <input className="form-control" name="unit_number" value={form.unit_number} onChange={handleFormChange} placeholder="Suite 1A" />
-                </div>
-                <div className="col-12 col-lg-8">
-                  <label className="form-label">Unit description</label>
-                  <input className="form-control" name="unit_description" value={form.unit_description} onChange={handleFormChange} placeholder="Second floor office space" />
-                </div>
-                <div className="col-12 col-sm-6 col-lg-4">
-                  <label className="form-label">Start date</label>
-                  <input className="form-control" name="start_date" type="date" value={form.start_date} onChange={handleFormChange} required />
-                </div>
-                <div className="col-12 col-sm-6 col-lg-4">
-                  <label className="form-label">End date</label>
-                  <input className="form-control" name="end_date" type="date" value={form.end_date} onChange={handleFormChange} required />
-                </div>
-                <div className="col-12 col-sm-6 col-lg-4">
-                  <label className="form-label">Frequency</label>
-                  <select className="form-select" name="payment_frequency" value={form.payment_frequency} onChange={handleFormChange}>
-                    <option value="yearly">Yearly</option>
-                    <option value="quarterly">Quarterly</option>
-                    <option value="monthly">Monthly</option>
-                  </select>
-                </div>
-                <div className="col-12 col-sm-6 col-lg-4">
-                  <label className="form-label">Rent amount</label>
-                  <input className="form-control" name="rent_amount" type="number" min="0" step="0.01" value={form.rent_amount} onChange={handleFormChange} />
-                </div>
-                <div className="col-12 col-sm-6 col-lg-4">
-                  <label className="form-label">Service charge</label>
-                  <input className="form-control" name="service_charge_amount" type="number" min="0" step="0.01" value={form.service_charge_amount} onChange={handleFormChange} />
-                </div>
-                <div className="col-12 col-sm-6 col-lg-4">
-                  <label className="form-label">Occupied space</label>
-                  <input className="form-control" name="occupied_space" type="number" min="0" step="0.01" value={form.occupied_space} onChange={handleFormChange} />
-                </div>
-                <div className="col-12 col-sm-6 col-lg-4">
-                  <label className="form-label">Status</label>
-                  <select className="form-select" name="status" value={form.status} onChange={handleFormChange}>
-                    <option value="active">Active</option>
-                    <option value="expired">Expired</option>
-                    <option value="terminated">Terminated</option>
-                  </select>
-                </div>
-                <div className="col-12 col-sm-6 col-lg-4">
-                  <label className="form-label">Next rent due</label>
-                  <input className="form-control" name="next_rent_due_date" type="date" value={form.next_rent_due_date} onChange={handleFormChange} />
-                </div>
-                <div className="col-12 col-sm-6 col-lg-4">
-                  <label className="form-label">Last reviewed</label>
-                  <input className="form-control" name="last_reviewed_date" type="date" value={form.last_reviewed_date} onChange={handleFormChange} />
-                </div>
-                <div className="col-12 col-md-6">
-                  <label className="form-label">6 month reminder</label>
-                  <input className="form-control" name="reminder_6_month_date" type="date" value={form.reminder_6_month_date} onChange={handleFormChange} />
-                </div>
-                <div className="col-12 col-md-6">
-                  <label className="form-label">3 month reminder</label>
-                  <input className="form-control" name="reminder_3_month_date" type="date" value={form.reminder_3_month_date} onChange={handleFormChange} />
-                </div>
-                <div className="col-12">
-                  <label className="form-label">Rent review note</label>
-                  <textarea className="form-control" name="rent_review_note" rows="3" value={form.rent_review_note} onChange={handleFormChange} />
+              </div>
+              <div className="tenora-form-section">
+                <div><strong>Status and review</strong><span>Keep tenancy status and rent-review notes current.</span></div>
+                <div className="row g-3">
+                  <div className="col-12 col-md-4"><label className="form-label">Status</label><select className="form-select" name="status" value={form.status} onChange={handleFormChange}><option value="active">Active</option><option value="expired">Expired</option><option value="terminated">Terminated</option></select></div>
+                  <div className="col-12 col-md-4"><label className="form-label">Last reviewed</label><input className="form-control" name="last_reviewed_date" type="date" value={form.last_reviewed_date} onChange={handleFormChange} /></div>
+                  <div className="col-12 col-md-4"><label className="form-label">Service charge</label><input className="form-control" type="text" value="Calculated from property budget" readOnly /></div>
+                  <div className="col-12"><label className="form-label">Rent review note</label><textarea className="form-control" name="rent_review_note" rows="3" value={form.rent_review_note} onChange={handleFormChange} /></div>
                 </div>
               </div>
             </div>
-
-            <div className="card-footer bg-white border-0 p-3 p-sm-4">
-              <div className="d-flex flex-column flex-sm-row justify-content-end gap-2">
-                <button className="btn btn-light" type="button" onClick={closeModal} style={{ borderRadius: 12 }}>
-                  Cancel
-                </button>
-                <button className="btn text-white border-0" type="submit" disabled={isSaving} style={{ background: emerald, borderRadius: 12 }}>
-                  {isSaving ? 'Saving...' : editingLease ? 'Save changes' : 'Create lease'}
-                </button>
-              </div>
-            </div>
+            <footer><button className="btn btn-light border" type="button" onClick={closeModal}>Cancel</button><button className="btn btn-primary tenora-primary-btn" type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : editingLease ? 'Save tenancy' : 'Create tenancy'}</button></footer>
           </form>
         </div>
       )}
 
-      <ConfirmModal
-        isOpen={Boolean(deletingLease)}
-        title="Delete lease?"
-        message={`This will permanently remove the lease for ${deletingLease?.tenant_name || deletingLease?.unit_number || 'this tenant'}. This action cannot be undone.`}
-        details={(
-          <>
-            <div className="small text-secondary mb-1">Lease details</div>
-            <div className="fw-semibold" style={{ color: '#101816' }}>
-              {deletingLease?.property_name || 'Property'} · {deletingLease?.unit_number || 'No unit'}
-            </div>
-          </>
-        )}
-        confirmLabel="Delete lease"
-        isWorking={isDeleting}
-        onCancel={closeDeleteModal}
-        onConfirm={confirmDelete}
-      />
-
-      <FeedbackModal
-        isOpen={Boolean(feedbackModal)}
-        {...(feedbackModal || {})}
-        onClose={() => setFeedbackModal(null)}
-      />
+      <ConfirmModal isOpen={Boolean(deletingLease)} title="Delete tenancy?" message={`This will permanently remove the tenancy for ${deletingLease?.tenant_name || deletingLease?.unit_number || 'this tenant'}.`} details={<><div className="small text-secondary mb-1">Tenancy details</div><div className="fw-semibold">{deletingLease?.property_name || 'Property'} · {deletingLease?.unit_number || 'No unit'}</div></>} confirmLabel="Delete tenancy" isWorking={isDeleting} onCancel={closeDeleteModal} onConfirm={confirmDelete} />
+      <FeedbackModal isOpen={Boolean(feedbackModal)} {...(feedbackModal || {})} onClose={() => setFeedbackModal(null)} />
     </div>
   );
 };

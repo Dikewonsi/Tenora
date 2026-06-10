@@ -3,15 +3,16 @@ import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider } from './context/AuthContext';
 import MainLayout from './layouts/MainLayout';
 import Dashboard from './pages/Dashboard';
+import DemandPreview from './pages/DemandPreview';
 import Leases from './pages/Leases';
 import Login from './pages/Login';
 import Payments from './pages/Payments';
 import Properties from './pages/Properties';
-import Reminders from './pages/Reminders';
-import Reports from './pages/Reports';
-import ServiceCharges from './pages/ServiceCharges';
 import Settings from './pages/Settings';
 import Tenants from './pages/Tenants';
+import Units from './pages/Units';
+import ServiceChargeBudgets from './pages/ServiceChargeBudgets';
+import ServiceChargeBudgetSchedule from './pages/ServiceChargeBudgetSchedule';
 
 const router = createBrowserRouter([
   {
@@ -37,6 +38,10 @@ const router = createBrowserRouter([
             element: <Tenants />
           },
           {
+            path: '/units',
+            element: <Units />
+          },
+          {
             path: '/leases',
             element: <Leases />
           },
@@ -46,15 +51,15 @@ const router = createBrowserRouter([
           },
           {
             path: '/service-charges',
-            element: <ServiceCharges />
+            element: <ServiceChargeBudgets />
           },
           {
-            path: '/reminders',
-            element: <Reminders />
+            path: '/service-charges/:budgetId/schedule',
+            element: <ServiceChargeBudgetSchedule />
           },
           {
-            path: '/reports',
-            element: <Reports />
+            path: '/service-charges/:demandId/document',
+            element: <DemandPreview />
           },
           {
             path: '/settings',

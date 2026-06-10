@@ -1,6 +1,13 @@
 import jwt from 'jsonwebtoken';
+import { assertAccessActive } from '../config/accessConfig.js';
 
 const authMiddleware = (req, res, next) => {
+    try {
+        assertAccessActive();
+    } catch (error) {
+        return next(error);
+    }
+
     // frontend always sends headers and authorization
     const authHeader = req.headers.authorization;
 

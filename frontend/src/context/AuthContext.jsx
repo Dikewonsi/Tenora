@@ -25,6 +25,14 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
   const [user, setUser] = useState(getStoredUser);
   const [isBootstrapping, setIsBootstrapping] = useState(Boolean(localStorage.getItem(TOKEN_KEY)));
+  const [accessStatus, setAccessStatus] = useState(null);
+  const [accessError, setAccessError] = useState('');
+  const [isAccessLoading, setIsAccessLoading] = useState(true);
+  const shouldRunCountdown = Boolean(
+    accessStatus
+    && !accessStatus.isExpired
+    && Number(accessStatus.remainingSeconds) > 0
+  );
 
   const clearSession = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
@@ -39,6 +47,33 @@ export const AuthProvider = ({ children }) => {
     setToken(nextToken);
     setUser(nextUser);
   }, []);
+
+  const refreshAccessStatus = useCallback(async () => {
+    try {
+      const response = await apiClient.get('/access/status');
+      const nextStatus = response.data.data;
+
+      setAccessStatus(nextStatus);
+      setAccessError('');
+
+      if (nextStatus.isExpired) {
+        clearSession();
+      }
+
+      return nextStatus;
+    } catch (error) {
+      const message = error.response?.data?.message || error.message || 'Access status could not be verified';
+      setAccessError(message);
+
+      if (error.response?.data?.code === 'ACCESS_CONFIG_INVALID') {
+        clearSession();
+      }
+
+      throw error;
+    } finally {
+      setIsAccessLoading(false);
+    }
+  }, [clearSession]);
 
   const login = useCallback(async ({ email, password }) => {
     const response = await apiClient.post('/auth/login', { email, password });
@@ -61,7 +96,81 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      refreshAccessStatus().catch(() => {});
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [refreshAccessStatus]);
+
+  useEffect(() => {
+    const handleAccessBlocked = (event) => {
+      clearSession();
+      setAccessError(event.detail?.message || 'Access period has expired. Please contact the administrator.');
+      setAccessStatus((currentStatus) => ({
+        ...(currentStatus || {}),
+        isExpired: true,
+        remainingSeconds: 0
+      }));
+      setIsAccessLoading(false);
+    };
+
+    window.addEventListener('tenora:access-blocked', handleAccessBlocked);
+    return () => window.removeEventListener('tenora:access-blocked', handleAccessBlocked);
+  }, [clearSession]);
+
+  useEffect(() => {
+    if (!shouldRunCountdown) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setAccessStatus((currentStatus) => {
+        if (!currentStatus || currentStatus.isExpired) return currentStatus;
+
+        const remainingSeconds = Math.max(0, Number(currentStatus.remainingSeconds || 0) - 1);
+        return {
+          ...currentStatus,
+          remainingSeconds,
+          isExpired: remainingSeconds === 0
+        };
+      });
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [shouldRunCountdown]);
+
+  useEffect(() => {
+    if (!accessStatus?.isExpired) return;
+
+    const timeoutId = window.setTimeout(() => {
+      clearSession();
+      setAccessError('Access period has expired. Please contact the administrator.');
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [accessStatus?.isExpired, clearSession]);
+
+  useEffect(() => {
+    const syncIntervalId = window.setInterval(() => {
+      refreshAccessStatus().catch(() => {});
+    }, 60000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshAccessStatus().catch(() => {});
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.clearInterval(syncIntervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [refreshAccessStatus]);
+
+  useEffect(() => {
     if (!token) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsBootstrapping(false);
       return;
     }
@@ -86,12 +195,28 @@ export const AuthProvider = ({ children }) => {
   const value = useMemo(() => ({
     token,
     user,
-    isAuthenticated: Boolean(token && user),
+    accessStatus,
+    accessError,
+    isAccessExpired: Boolean(accessStatus?.isExpired),
+    isAccessLoading,
+    isAuthenticated: Boolean(token && user && accessStatus && !accessStatus.isExpired),
     isBootstrapping,
     login,
     logout: clearSession,
-    refreshUser
-  }), [clearSession, isBootstrapping, login, refreshUser, token, user]);
+    refreshUser,
+    refreshAccessStatus
+  }), [
+    accessError,
+    accessStatus,
+    clearSession,
+    isAccessLoading,
+    isBootstrapping,
+    login,
+    refreshAccessStatus,
+    refreshUser,
+    token,
+    user
+  ]);
 
   return (
     <AuthContext.Provider value={value}>
@@ -100,6 +225,7 @@ export const AuthProvider = ({ children }) => {
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => {
   const context = useContext(AuthContext);
 

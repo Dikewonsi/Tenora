@@ -7,8 +7,8 @@ const modalBackdropStyle = {
 
 const modalCardStyle = {
   maxWidth: 560,
-  borderRadius: 26,
-  boxShadow: '0 28px 80px rgba(15, 23, 42, 0.22)'
+  borderRadius: 14,
+  boxShadow: '0 22px 60px rgba(15, 23, 42, 0.18)'
 };
 
 const modalIconStyles = {
@@ -41,6 +41,7 @@ export const ConfirmModal = ({
   cancelLabel = 'Cancel',
   isWorking = false,
   variant = 'danger',
+  icon: IconOverride,
   onCancel,
   onConfirm
 }) => {
@@ -48,7 +49,7 @@ export const ConfirmModal = ({
     return null;
   }
 
-  const Icon = variant === 'danger' ? IconTrash : iconByVariant[variant] || IconAlertCircle;
+  const Icon = IconOverride || (variant === 'danger' ? IconTrash : iconByVariant[variant] || IconAlertCircle);
   const iconStyle = modalIconStyles[variant] || modalIconStyles.danger;
   const confirmClass = variant === 'danger' ? 'btn-danger' : 'text-white border-0';
   const confirmStyle = variant === 'danger' ? { borderRadius: 12 } : { borderRadius: 12, background: '#059669', borderColor: '#059669' };
@@ -58,7 +59,7 @@ export const ConfirmModal = ({
       <div className="card border-0 w-100" style={modalCardStyle}>
         <div className="card-body p-4 p-md-5">
           <div className="d-flex align-items-start gap-3 mb-4">
-            <div className="d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: 58, height: 58, borderRadius: 20, ...iconStyle }}>
+            <div className="d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: 52, height: 52, borderRadius: 14, ...iconStyle }}>
               <Icon size={30} stroke={2.2} />
             </div>
             <div>
@@ -78,7 +79,7 @@ export const ConfirmModal = ({
               {cancelLabel}
             </button>
             <button className={`btn ${confirmClass} d-inline-flex align-items-center justify-content-center gap-2`} type="button" onClick={onConfirm} disabled={isWorking} style={confirmStyle}>
-              {variant === 'danger' && <IconTrash size={18} />}
+              {variant === 'danger' && <Icon size={18} />}
               {isWorking ? 'Working...' : confirmLabel}
             </button>
           </div>
@@ -119,7 +120,7 @@ export const FeedbackModal = ({
           </div>
 
           <div className="d-flex align-items-start gap-3 mb-4">
-            <div className="d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: 62, height: 62, borderRadius: 20, ...iconStyle }}>
+            <div className="d-flex align-items-center justify-content-center flex-shrink-0" style={{ width: 52, height: 52, borderRadius: 14, ...iconStyle }}>
               <Icon size={38} stroke={2.2} />
             </div>
             <div>

@@ -1,38 +1,46 @@
 import pool from '../db/pool.js';
+import leaseService from './leaseService.js';
 
 const getSummary = async () => {
     const [
         countsResult,
-        leaseStatusResult,
         paymentSummaryResult,
         demandSummaryResult,
-        reminderSummaryResult,
-        expiringLeasesResult,
-        recentPaymentsResult
+        recentPaymentsResult,
+        expiry
     ] = await Promise.all([
         pool.query(`
             SELECT
-                (SELECT COUNT(*) FROM properties) AS properties,
-                (SELECT COUNT(*) FROM tenants) AS tenants,
-                (SELECT COUNT(*) FROM leases) AS leases,
-                (SELECT COUNT(*) FROM leases WHERE status = 'active') AS active_leases,
-                (SELECT COUNT(*) FROM payments) AS payments,
-                (SELECT COUNT(*) FROM service_charge_demands) AS service_charge_demands,
-                (SELECT COUNT(*) FROM reminders) AS reminders,
-                (SELECT COALESCE(SUM(total_units), 0) FROM properties) AS total_units,
-                (SELECT COALESCE(SUM(total_lettable_space), 0) FROM properties) AS total_lettable_space,
+                (SELECT COUNT(*) FROM properties)::int AS properties,
+                (SELECT COUNT(*) FROM tenants)::int AS tenants,
+                (SELECT COUNT(*) FROM leases)::int AS leases,
+                (SELECT COUNT(*) FROM leases WHERE status = 'active')::int AS active_leases,
+                (SELECT COUNT(*) FROM units WHERE status = 'active')::int AS total_units,
                 (
-                    SELECT COUNT(*)
+                    SELECT COUNT(DISTINCT unit_id)
                     FROM leases
                     WHERE status = 'active'
-                      AND end_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '90 days'
-                ) AS expiring_leases_90_days
-        `),
-        pool.query(`
-            SELECT status, COUNT(*) AS count
-            FROM leases
-            GROUP BY status
-            ORDER BY status
+                      AND start_date <= CURRENT_DATE
+                      AND end_date >= CURRENT_DATE
+                )::int AS occupied_units,
+                (
+                    SELECT COUNT(*)
+                    FROM units
+                    WHERE status = 'active'
+                )::int - (
+                    SELECT COUNT(DISTINCT unit_id)
+                    FROM leases
+                    WHERE status = 'active'
+                      AND start_date <= CURRENT_DATE
+                      AND end_date >= CURRENT_DATE
+                )::int AS vacant_units,
+                (SELECT COUNT(*) FROM payments)::int AS payments,
+                (SELECT COUNT(*) FROM service_charge_demands)::int AS service_charge_demands,
+                (
+                    SELECT COALESCE(SUM(floor_area_sqm), 0)
+                    FROM units
+                    WHERE status = 'active'
+                ) AS total_lettable_space
         `),
         pool.query(`
             SELECT
@@ -47,33 +55,8 @@ const getSummary = async () => {
                 COALESCE(SUM(total_amount), 0) AS total_demanded,
                 COALESCE(SUM(amount_paid), 0) AS total_demand_paid,
                 COALESCE(SUM(balance), 0) AS total_demand_balance,
-                COUNT(*) FILTER (WHERE status IN ('draft', 'issued', 'pending')) AS open_demands
+                COUNT(*) FILTER (WHERE status IN ('draft', 'issued', 'pending', 'part_paid', 'overdue'))::int AS open_demands
             FROM service_charge_demands
-        `),
-        pool.query(`
-            SELECT
-                COUNT(*) FILTER (WHERE status = 'pending') AS pending,
-                COUNT(*) FILTER (
-                    WHERE status = 'pending'
-                      AND scheduled_send_date <= CURRENT_DATE
-                ) AS due_today_or_overdue,
-                COUNT(*) FILTER (WHERE acknowledged = TRUE) AS acknowledged
-            FROM reminders
-        `),
-        pool.query(`
-            SELECT
-                leases.id,
-                leases.end_date,
-                leases.unit_number,
-                properties.property_name,
-                tenants.full_name AS tenant_name
-            FROM leases
-            INNER JOIN properties ON properties.id = leases.property_id
-            INNER JOIN tenants ON tenants.id = leases.tenant_id
-            WHERE leases.status = 'active'
-              AND leases.end_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '90 days'
-            ORDER BY leases.end_date ASC
-            LIMIT 10
         `),
         pool.query(`
             SELECT
@@ -82,26 +65,27 @@ const getSummary = async () => {
                 payments.amount_paid,
                 payments.payment_date,
                 properties.property_name,
-                tenants.full_name AS tenant_name
+                tenants.full_name AS tenant_name,
+                COALESCE(units.unit_name, leases.unit_number) AS unit_name
             FROM payments
             INNER JOIN leases ON leases.id = payments.lease_id
             INNER JOIN properties ON properties.id = leases.property_id
             INNER JOIN tenants ON tenants.id = leases.tenant_id
+            LEFT JOIN units ON units.id = leases.unit_id
             ORDER BY payments.payment_date DESC, payments.created_at DESC
-            LIMIT 10
-        `)
+            LIMIT 8
+        `),
+        leaseService.getRentExpiryBuckets()
     ]);
 
     return {
         counts: countsResult.rows[0],
-        leasesByStatus: leaseStatusResult.rows,
         payments: paymentSummaryResult.rows[0],
         serviceChargeDemands: demandSummaryResult.rows[0],
-        reminders: reminderSummaryResult.rows[0],
-        expiringLeases: expiringLeasesResult.rows,
+        rentExpiry: expiry,
         recentPayments: recentPaymentsResult.rows
     };
-}
+};
 
 export default {
     getSummary

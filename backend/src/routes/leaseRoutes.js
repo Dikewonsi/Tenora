@@ -6,6 +6,7 @@ const leaseRoutes = express.Router();
 
 leaseRoutes.use(authMiddleware);
 
+leaseRoutes.get('/rent-expiry', leaseController.getRentExpiryBuckets);
 leaseRoutes.get('/', leaseController.getLeases);
 leaseRoutes.get('/:id', leaseController.getLease);
 leaseRoutes.post('/', leaseController.createLease);

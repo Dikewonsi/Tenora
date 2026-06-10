@@ -21,12 +21,22 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     const isLoginRequest = error.config?.url?.includes('/auth/login');
+    const errorCode = error.response?.data?.code;
 
-    if (error.response?.status === 401 && !isLoginRequest) {
+    if (errorCode === 'ACCESS_EXPIRED' || errorCode === 'ACCESS_CONFIG_INVALID') {
+      localStorage.removeItem('tenora_token');
+      localStorage.removeItem('tenora_user');
+      window.dispatchEvent(new CustomEvent('tenora:access-blocked', {
+        detail: {
+          code: errorCode,
+          message: error.response?.data?.message
+        }
+      }));
+    } else if (error.response?.status === 401 && !isLoginRequest) {
       localStorage.removeItem('tenora_token');
       localStorage.removeItem('tenora_user');
 
-      window.location.href = '/login'
+      window.location.href = '/login';
     }
 
     return Promise.reject(error);

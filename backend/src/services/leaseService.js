@@ -5,6 +5,7 @@ const leaseColumns = `
     leases.id,
     leases.property_id,
     leases.tenant_id,
+    leases.unit_id,
     leases.unit_number,
     leases.unit_description,
     leases.start_date,
@@ -13,9 +14,6 @@ const leaseColumns = `
     leases.service_charge_amount,
     leases.payment_frequency,
     leases.status,
-    leases.next_rent_due_date,
-    leases.reminder_6_month_date,
-    leases.reminder_3_month_date,
     leases.last_reviewed_date,
     leases.rent_review_note,
     leases.occupied_space,
@@ -27,12 +25,79 @@ const selectLeaseQuery = `
     SELECT
         ${leaseColumns},
         properties.property_name,
-        properties.property_code,
-        tenants.full_name AS tenant_name
+        tenants.full_name AS tenant_name,
+        units.unit_name,
+        units.floor_area_sqm
     FROM leases
     INNER JOIN properties ON properties.id = leases.property_id
     INNER JOIN tenants ON tenants.id = leases.tenant_id
+    LEFT JOIN units ON units.id = leases.unit_id
 `;
+
+const validateUnitAssignment = async ({
+    unitId,
+    propertyId,
+    startDate,
+    endDate,
+    status,
+    excludeLeaseId = null
+}) => {
+    if(!unitId) {
+        return null;
+    }
+
+    const unitResult = await pool.query(
+        `
+            SELECT id, property_id, unit_name, floor_area_sqm, status
+            FROM units
+            WHERE id = $1
+        `,
+        [unitId]
+    );
+    const unit = unitResult.rows[0];
+
+    if(!unit) {
+        const error = new Error('Selected unit does not exist');
+        error.status = 400;
+        throw error;
+    }
+
+    if(unit.property_id !== propertyId) {
+        const error = new Error('Selected unit does not belong to the selected property');
+        error.status = 400;
+        throw error;
+    }
+
+    if(unit.status !== 'active') {
+        const error = new Error('Selected unit is inactive');
+        error.status = 400;
+        throw error;
+    }
+
+    if(status === 'active') {
+        const overlapResult = await pool.query(
+            `
+                SELECT id
+                FROM leases
+                WHERE unit_id = $1
+                  AND status = 'active'
+                  AND ($4::uuid IS NULL OR id <> $4)
+                  AND start_date <= $3
+                  AND end_date >= $2
+                LIMIT 1
+            `,
+            [unitId, startDate, endDate, excludeLeaseId]
+        );
+
+        if(overlapResult.rows[0]) {
+            const error = new Error('Selected unit already has an overlapping active occupancy');
+            error.status = 400;
+            throw error;
+        }
+    }
+
+    return unit;
+};
 
 const getAllLeases = async (filters = {}) => {
     const { property_id, tenant_id, status } = filters;
@@ -72,6 +137,52 @@ const getAllLeases = async (filters = {}) => {
     };
 }
 
+const getRentExpiryBuckets = async () => {
+    const result = await pool.query(
+        `
+            SELECT
+                leases.id,
+                leases.end_date,
+                leases.rent_amount,
+                leases.status,
+                properties.property_name,
+                tenants.full_name AS tenant_name,
+                COALESCE(units.unit_name, leases.unit_number) AS unit_name,
+                (leases.end_date - CURRENT_DATE)::int AS days_remaining,
+                CASE
+                    WHEN leases.end_date - CURRENT_DATE < 30 THEN 'expiring_soon'
+                    WHEN leases.end_date - CURRENT_DATE < 60 THEN '30_days'
+                    WHEN leases.end_date - CURRENT_DATE < 90 THEN '60_days'
+                    ELSE '90_days'
+                END AS expiry_bucket
+            FROM leases
+            INNER JOIN properties ON properties.id = leases.property_id
+            INNER JOIN tenants ON tenants.id = leases.tenant_id
+            LEFT JOIN units ON units.id = leases.unit_id
+            WHERE leases.status = 'active'
+              AND leases.end_date >= CURRENT_DATE
+              AND leases.end_date <= CURRENT_DATE + INTERVAL '90 days'
+            ORDER BY leases.end_date ASC, tenants.full_name ASC
+        `
+    );
+
+    const buckets = {
+        expiring_soon: [],
+        '30_days': [],
+        '60_days': [],
+        '90_days': []
+    };
+
+    result.rows.forEach((lease) => {
+        buckets[lease.expiry_bucket].push(lease);
+    });
+
+    return {
+        buckets,
+        leases: result.rows
+    };
+};
+
 const getLeaseById = async (id) => {
     const result = await pool.query(
         `
@@ -96,6 +207,7 @@ const createLease = async (leaseData) => {
     const {
         property_id,
         tenant_id,
+        unit_id,
         unit_number,
         unit_description,
         start_date,
@@ -104,9 +216,6 @@ const createLease = async (leaseData) => {
         service_charge_amount,
         payment_frequency,
         status,
-        next_rent_due_date,
-        reminder_6_month_date,
-        reminder_3_month_date,
         last_reviewed_date,
         rent_review_note,
         occupied_space
@@ -118,12 +227,27 @@ const createLease = async (leaseData) => {
         throw error;
     }
 
+    if(end_date < start_date) {
+        const error = new Error('Lease end date cannot be before start date');
+        error.status = 400;
+        throw error;
+    }
+
+    const selectedUnit = await validateUnitAssignment({
+        unitId: unit_id,
+        propertyId: property_id,
+        startDate: start_date,
+        endDate: end_date,
+        status: status || 'active'
+    });
+
     try {
         const result = await pool.query(
             `
                 INSERT INTO leases (
                     property_id,
                     tenant_id,
+                    unit_id,
                     unit_number,
                     unit_description,
                     start_date,
@@ -132,18 +256,16 @@ const createLease = async (leaseData) => {
                     service_charge_amount,
                     payment_frequency,
                     status,
-                    next_rent_due_date,
-                    reminder_6_month_date,
-                    reminder_3_month_date,
                     last_reviewed_date,
                     rent_review_note,
                     occupied_space
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                 RETURNING
                     id,
                     property_id,
                     tenant_id,
+                    unit_id,
                     unit_number,
                     unit_description,
                     start_date,
@@ -152,9 +274,6 @@ const createLease = async (leaseData) => {
                     service_charge_amount,
                     payment_frequency,
                     status,
-                    next_rent_due_date,
-                    reminder_6_month_date,
-                    reminder_3_month_date,
                     last_reviewed_date,
                     rent_review_note,
                     occupied_space,
@@ -164,7 +283,8 @@ const createLease = async (leaseData) => {
             [
                 property_id,
                 tenant_id,
-                unit_number,
+                unit_id || null,
+                selectedUnit?.unit_name || unit_number,
                 unit_description,
                 start_date,
                 end_date,
@@ -172,12 +292,9 @@ const createLease = async (leaseData) => {
                 service_charge_amount,
                 payment_frequency,
                 status,
-                next_rent_due_date,
-                reminder_6_month_date,
-                reminder_3_month_date,
                 last_reviewed_date,
                 rent_review_note,
-                occupied_space
+                occupied_space ?? selectedUnit?.floor_area_sqm
             ]
         );
 
@@ -198,6 +315,7 @@ const updateLease = async (id, leaseData) => {
     const {
         property_id = existingLease.property_id,
         tenant_id = existingLease.tenant_id,
+        unit_id = existingLease.unit_id,
         unit_number = existingLease.unit_number,
         unit_description = existingLease.unit_description,
         start_date = existingLease.start_date,
@@ -206,13 +324,25 @@ const updateLease = async (id, leaseData) => {
         service_charge_amount = existingLease.service_charge_amount,
         payment_frequency = existingLease.payment_frequency,
         status = existingLease.status,
-        next_rent_due_date = existingLease.next_rent_due_date,
-        reminder_6_month_date = existingLease.reminder_6_month_date,
-        reminder_3_month_date = existingLease.reminder_3_month_date,
         last_reviewed_date = existingLease.last_reviewed_date,
         rent_review_note = existingLease.rent_review_note,
         occupied_space = existingLease.occupied_space
     } = leaseData;
+
+    if(end_date < start_date) {
+        const error = new Error('Lease end date cannot be before start date');
+        error.status = 400;
+        throw error;
+    }
+
+    const selectedUnit = await validateUnitAssignment({
+        unitId: unit_id,
+        propertyId: property_id,
+        startDate: start_date,
+        endDate: end_date,
+        status,
+        excludeLeaseId: id
+    });
 
     try {
         const result = await pool.query(
@@ -221,26 +351,25 @@ const updateLease = async (id, leaseData) => {
                 SET
                     property_id = $1,
                     tenant_id = $2,
-                    unit_number = $3,
-                    unit_description = $4,
-                    start_date = $5,
-                    end_date = $6,
-                    rent_amount = $7,
-                    service_charge_amount = $8,
-                    payment_frequency = $9,
-                    status = $10,
-                    next_rent_due_date = $11,
-                    reminder_6_month_date = $12,
-                    reminder_3_month_date = $13,
-                    last_reviewed_date = $14,
-                    rent_review_note = $15,
-                    occupied_space = $16,
+                    unit_id = $3,
+                    unit_number = $4,
+                    unit_description = $5,
+                    start_date = $6,
+                    end_date = $7,
+                    rent_amount = $8,
+                    service_charge_amount = $9,
+                    payment_frequency = $10,
+                    status = $11,
+                    last_reviewed_date = $12,
+                    rent_review_note = $13,
+                    occupied_space = $14,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = $17
+                WHERE id = $15
                 RETURNING
                     id,
                     property_id,
                     tenant_id,
+                    unit_id,
                     unit_number,
                     unit_description,
                     start_date,
@@ -249,9 +378,6 @@ const updateLease = async (id, leaseData) => {
                     service_charge_amount,
                     payment_frequency,
                     status,
-                    next_rent_due_date,
-                    reminder_6_month_date,
-                    reminder_3_month_date,
                     last_reviewed_date,
                     rent_review_note,
                     occupied_space,
@@ -261,7 +387,8 @@ const updateLease = async (id, leaseData) => {
             [
                 property_id,
                 tenant_id,
-                unit_number,
+                unit_id || null,
+                selectedUnit?.unit_name || unit_number,
                 unit_description,
                 start_date,
                 end_date,
@@ -269,12 +396,9 @@ const updateLease = async (id, leaseData) => {
                 service_charge_amount,
                 payment_frequency,
                 status,
-                next_rent_due_date,
-                reminder_6_month_date,
-                reminder_3_month_date,
                 last_reviewed_date,
                 rent_review_note,
-                occupied_space,
+                occupied_space ?? selectedUnit?.floor_area_sqm,
                 id
             ]
         );
@@ -302,6 +426,7 @@ const deleteLease = async (id) => {
                     id,
                     property_id,
                     tenant_id,
+                    unit_id,
                     unit_number,
                     unit_description,
                     start_date,
@@ -310,9 +435,6 @@ const deleteLease = async (id) => {
                     service_charge_amount,
                     payment_frequency,
                     status,
-                    next_rent_due_date,
-                    reminder_6_month_date,
-                    reminder_3_month_date,
                     last_reviewed_date,
                     rent_review_note,
                     occupied_space,
@@ -343,6 +465,7 @@ const deleteLease = async (id) => {
 
 export default {
     getAllLeases,
+    getRentExpiryBuckets,
     getLeaseById,
     createLease,
     updateLease,

@@ -1,10 +1,17 @@
 import { useState } from 'react';
-import { IconBuildingCommunity, IconBuildingEstate, IconHomeStats, IconLock, IconMail, IconUsers } from '@tabler/icons-react';
+import { IconBuildingCommunity, IconLock, IconMail } from '@tabler/icons-react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const Login = () => {
-  const { isAuthenticated, login } = useAuth();
+  const {
+    accessError,
+    accessStatus,
+    isAccessExpired,
+    isAccessLoading,
+    isAuthenticated,
+    login
+  } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [form, setForm] = useState({
@@ -13,6 +20,7 @@ const Login = () => {
   });
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const expiredMessage = 'Access period has expired. Please contact the administrator.';
 
   if (isAuthenticated) {
     return <Navigate to="/dashboard" replace />;
@@ -30,6 +38,12 @@ const Login = () => {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
+
+    if (isAccessExpired) {
+      setError(expiredMessage);
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -76,13 +90,13 @@ const Login = () => {
             </span>
 
             <h1 className="display-5 fw-bold mb-3">
-              Manage properties, leases, payments, and reminders from{' '}
+              Manage properties, tenancies, service charges, and payments from{' '}
               <span style={{ color: '#059669' }}>one workspace.</span>
             </h1>
 
             <p className="text-secondary fs-4 mb-4">
               Tenora gives property teams a clean dashboard for rent tracking, service charge
-              demands, lease monitoring, tenant records, and operational reports.
+              demands, rent expiry monitoring, tenant records, and payment activity.
             </p>
           </div>
 
@@ -117,8 +131,8 @@ const Login = () => {
                   <IconLock size={22} />
                 </span>
                 <div>
-                  <div className="fw-bold">Lease tracking</div>
-                  <small className="text-secondary">Monitor active and expiring leases</small>
+                  <div className="fw-bold">Tenancy tracking</div>
+                  <small className="text-secondary">Monitor active and expiring tenancies</small>
                 </div>
               </div>
             </div>
@@ -191,6 +205,18 @@ const Login = () => {
                 </div>
               )}
 
+              {!error && (isAccessExpired || accessError) && (
+                <div className="alert alert-danger rounded-4 border-0" role="alert">
+                  {isAccessExpired ? expiredMessage : accessError}
+                </div>
+              )}
+
+              {!isAccessExpired && accessStatus?.expiresAt && (
+                <div className="tenora-login-access-note">
+                  Access is available until {new Date(accessStatus.expiresAt).toLocaleString()}.
+                </div>
+              )}
+
               <form onSubmit={handleSubmit} autoComplete="off" noValidate>
                 <div className="mb-3">
                   <label className="form-label fw-semibold" htmlFor="email">
@@ -239,13 +265,13 @@ const Login = () => {
                 <button
                   type="submit"
                   className="btn btn-lg w-100 rounded-4 fw-bold shadow-sm text-white"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isAccessLoading || isAccessExpired || Boolean(accessError)}
                   style={{
                     background: '#059669',
                     borderColor: '#059669'
                   }}
                 >
-                  {isSubmitting ? 'Signing in...' : 'Sign in'}
+                  {isAccessLoading ? 'Checking access...' : isSubmitting ? 'Signing in...' : isAccessExpired ? 'Access expired' : 'Sign in'}
                 </button>
               </form>
 

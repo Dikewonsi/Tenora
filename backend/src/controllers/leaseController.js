@@ -35,6 +35,20 @@ const getLease = async (req, res, next) => {
     }
 }
 
+const getRentExpiryBuckets = async (req, res, next) => {
+    try {
+        const expiry = await leaseService.getRentExpiryBuckets();
+
+        res.status(200).json({
+            success: true,
+            message: 'Rent expiry schedule retrieved successfully',
+            data: expiry
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 const createLease = async (req, res, next) => {
     try {
         const lease = await leaseService.createLease(req.body);
@@ -86,6 +100,7 @@ const deleteLease = async (req, res, next) => {
 export default {
     getLeases,
     getLease,
+    getRentExpiryBuckets,
     createLease,
     updateLease,
     deleteLease

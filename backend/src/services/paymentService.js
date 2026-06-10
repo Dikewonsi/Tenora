@@ -1,4 +1,5 @@
 import pool from '../db/pool.js';
+import { recalculateServiceChargeDemandFinancials } from './serviceChargeDemandService.js';
 import { getPagination } from '../utils/pagination.js';
 
 const paymentColumns = `
@@ -68,6 +69,72 @@ const ensureDemandBelongsToLease = async (demandId, leaseId) => {
         throw error;
     }
 }
+
+const validatePaymentData = ({ service_charge_demand_id, payment_category, amount_paid }) => {
+    const amountPaid = Number(amount_paid);
+
+    if(Number.isNaN(amountPaid) || amountPaid <= 0) {
+        const error = new Error('Payment amount must be greater than zero');
+        error.status = 400;
+        throw error;
+    }
+
+    if(service_charge_demand_id && payment_category !== 'service_charge') {
+        const error = new Error('Payments linked to a service charge demand must use the service_charge category');
+        error.status = 400;
+        throw error;
+    }
+}
+
+const validateServiceChargePaymentLimit = async ({
+    demandId,
+    amountPaid,
+    status,
+    excludePaymentId = null,
+    client = pool
+}) => {
+    if(!demandId || status !== 'paid') {
+        return;
+    }
+
+    const demandResult = await client.query(
+        `
+            SELECT total_amount
+            FROM service_charge_demands
+            WHERE id = $1
+            FOR UPDATE
+        `,
+        [demandId]
+    );
+    const demand = demandResult.rows[0];
+
+    if(!demand) {
+        const error = new Error('Service charge demand does not exist');
+        error.status = 400;
+        throw error;
+    }
+
+    const paidResult = await client.query(
+        `
+            SELECT COALESCE(SUM(amount_paid), 0) AS already_paid
+            FROM payments
+            WHERE service_charge_demand_id = $1
+              AND payment_category = 'service_charge'
+              AND status = 'paid'
+              AND ($2::uuid IS NULL OR id <> $2)
+        `,
+        [demandId, excludePaymentId]
+    );
+    const alreadyPaid = Number(paidResult.rows[0].already_paid || 0);
+    const nextPaidTotal = alreadyPaid + Number(amountPaid);
+
+    if(nextPaidTotal > Number(demand.total_amount || 0) + 0.001) {
+        const remainingBalance = Math.max(Number(demand.total_amount || 0) - alreadyPaid, 0);
+        const error = new Error(`Payment exceeds the outstanding service charge balance of ${remainingBalance.toFixed(2)}`);
+        error.status = 400;
+        throw error;
+    }
+};
 
 const getAllPayments = async (filters = {}) => {
     const { lease_id, payment_category, status, date_from, date_to } = filters;
@@ -154,10 +221,28 @@ const createPayment = async (paymentData) => {
         throw error;
     }
 
-    await ensureDemandBelongsToLease(service_charge_demand_id, lease_id);
+    const normalizedDemandId = service_charge_demand_id || null;
+
+    validatePaymentData({
+        service_charge_demand_id: normalizedDemandId,
+        payment_category,
+        amount_paid
+    });
+
+    await ensureDemandBelongsToLease(normalizedDemandId, lease_id);
+
+    const client = await pool.connect();
 
     try {
-        const result = await pool.query(
+        await client.query('BEGIN');
+        await validateServiceChargePaymentLimit({
+            demandId: normalizedDemandId,
+            amountPaid: amount_paid,
+            status: status || 'paid',
+            client
+        });
+
+        const result = await client.query(
             `
                 INSERT INTO payments (
                     lease_id,
@@ -177,7 +262,7 @@ const createPayment = async (paymentData) => {
             `,
             [
                 lease_id,
-                service_charge_demand_id,
+                normalizedDemandId,
                 payment_category,
                 amount_paid,
                 payment_date,
@@ -185,19 +270,29 @@ const createPayment = async (paymentData) => {
                 payment_for_period_end,
                 payment_method,
                 receipt_number,
-                status,
+                status || 'paid',
                 notes
             ]
         );
 
+        if(normalizedDemandId) {
+            await recalculateServiceChargeDemandFinancials(normalizedDemandId, client);
+        }
+
+        await client.query('COMMIT');
+
         return result.rows[0];
     } catch (error) {
+        await client.query('ROLLBACK');
+
         if(error.code === '23503') {
             error.message = 'Lease or service charge demand does not exist';
             error.status = 400;
         }
 
         throw error;
+    } finally {
+        client.release();
     }
 }
 
@@ -218,10 +313,29 @@ const updatePayment = async (id, paymentData) => {
         notes = existingPayment.notes
     } = paymentData;
 
-    await ensureDemandBelongsToLease(service_charge_demand_id, lease_id);
+    const normalizedDemandId = service_charge_demand_id || null;
+
+    validatePaymentData({
+        service_charge_demand_id: normalizedDemandId,
+        payment_category,
+        amount_paid
+    });
+
+    await ensureDemandBelongsToLease(normalizedDemandId, lease_id);
+
+    const client = await pool.connect();
 
     try {
-        const result = await pool.query(
+        await client.query('BEGIN');
+        await validateServiceChargePaymentLimit({
+            demandId: normalizedDemandId,
+            amountPaid: amount_paid,
+            status,
+            excludePaymentId: id,
+            client
+        });
+
+        const result = await client.query(
             `
                 UPDATE payments
                 SET
@@ -242,7 +356,7 @@ const updatePayment = async (id, paymentData) => {
             `,
             [
                 lease_id,
-                service_charge_demand_id,
+                normalizedDemandId,
                 payment_category,
                 amount_paid,
                 payment_date,
@@ -256,36 +370,68 @@ const updatePayment = async (id, paymentData) => {
             ]
         );
 
+        if(existingPayment.service_charge_demand_id) {
+            await recalculateServiceChargeDemandFinancials(existingPayment.service_charge_demand_id, client);
+        }
+
+        if(normalizedDemandId && normalizedDemandId !== existingPayment.service_charge_demand_id) {
+            await recalculateServiceChargeDemandFinancials(normalizedDemandId, client);
+        }
+
+        await client.query('COMMIT');
+
         return result.rows[0];
     } catch (error) {
+        await client.query('ROLLBACK');
+
         if(error.code === '23503') {
             error.message = 'Lease or service charge demand does not exist';
             error.status = 400;
         }
 
         throw error;
+    } finally {
+        client.release();
     }
 }
 
 const deletePayment = async (id) => {
-    const result = await pool.query(
-        `
-            DELETE FROM payments
-            WHERE id = $1
-            RETURNING ${paymentReturningColumns}
-        `,
-        [id]
-    );
+    const client = await pool.connect();
+    let result;
 
-    const deletedPayment = result.rows[0];
+    try {
+        await client.query('BEGIN');
 
-    if(!deletedPayment) {
-        const error = new Error('Payment not found');
-        error.status = 404;
+        result = await client.query(
+            `
+                DELETE FROM payments
+                WHERE id = $1
+                RETURNING ${paymentReturningColumns}
+            `,
+            [id]
+        );
+
+        const deletedPayment = result.rows[0];
+
+        if(!deletedPayment) {
+            const error = new Error('Payment not found');
+            error.status = 404;
+            throw error;
+        }
+
+        if(deletedPayment.service_charge_demand_id) {
+            await recalculateServiceChargeDemandFinancials(deletedPayment.service_charge_demand_id, client);
+        }
+
+        await client.query('COMMIT');
+
+        return deletedPayment;
+    } catch (error) {
+        await client.query('ROLLBACK');
         throw error;
+    } finally {
+        client.release();
     }
-
-    return deletedPayment;
 }
 
 export default {

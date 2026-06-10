@@ -1,218 +1,247 @@
 import {
-  IconBell,
   IconBuildingCommunity,
   IconBuildingEstate,
-  IconChartBar,
+  IconChevronDown,
+  IconChevronRight,
   IconFileInvoice,
+  IconHome,
   IconHomeStats,
   IconLogout,
   IconMenu2,
+  IconPlus,
   IconReceipt,
   IconReceiptTax,
+  IconSearch,
   IconSettings,
   IconUsers,
   IconX
 } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import AccessCountdown from '../components/AccessCountdown';
+import { ConfirmModal } from '../components/ActionModal';
 import { useAuth } from '../context/AuthContext';
 
-const navItems = [
-  { label: 'Dashboard', path: '/dashboard', icon: IconHomeStats },
-  { label: 'Properties', path: '/properties', icon: IconBuildingEstate },
-  { label: 'Tenants', path: '/tenants', icon: IconUsers },
-  { label: 'Leases', path: '/leases', icon: IconFileInvoice },
-  { label: 'Payments', path: '/payments', icon: IconReceipt },
-  { label: 'Service Charges', path: '/service-charges', icon: IconReceiptTax },
-  { label: 'Reminders', path: '/reminders', icon: IconBell },
-  { label: 'Reports', path: '/reports', icon: IconChartBar },
-  { label: 'Settings', path: '/settings', icon: IconSettings }
+const navGroups = [
+  {
+    label: '',
+    items: [{ label: 'Dashboard', path: '/dashboard', icon: IconHomeStats }]
+  },
+  {
+    label: 'Portfolio',
+    items: [
+      { label: 'Properties', path: '/properties', icon: IconBuildingEstate },
+      { label: 'Units', path: '/units', icon: IconHome }
+    ]
+  },
+  {
+    label: 'People',
+    items: [
+      { label: 'Tenants', path: '/tenants', icon: IconUsers },
+      { label: 'Tenancies', path: '/leases', icon: IconFileInvoice }
+    ]
+  },
+  {
+    label: 'Money',
+    items: [
+      { label: 'Service Charges', path: '/service-charges', icon: IconReceiptTax },
+      { label: 'Payments', path: '/payments', icon: IconReceipt }
+    ]
+  },
+  {
+    label: '',
+    items: [{ label: 'Settings', path: '/settings', icon: IconSettings }]
+  }
+];
+
+const pageMeta = [
+  { match: /^\/dashboard/, title: 'Dashboard', parent: 'Workspace' },
+  { match: /^\/properties/, title: 'Properties', parent: 'Portfolio' },
+  { match: /^\/units/, title: 'Units', parent: 'Portfolio' },
+  { match: /^\/tenants/, title: 'Tenants', parent: 'People' },
+  { match: /^\/leases/, title: 'Tenancies', parent: 'People' },
+  { match: /^\/payments/, title: 'Payments', parent: 'Money' },
+  { match: /\/service-charges\/.+\/document/, title: 'Demand Notice', parent: 'Service Charges' },
+  { match: /\/service-charges\/.+\/schedule/, title: 'Budget Schedule', parent: 'Service Charges' },
+  { match: /^\/service-charges/, title: 'Service Charges', parent: 'Money' },
+  { match: /^\/settings/, title: 'Settings', parent: 'Workspace' }
+];
+
+const quickActions = [
+  { label: 'Add property', path: '/properties', create: 'property', icon: IconBuildingEstate },
+  { label: 'Add unit', path: '/units', create: 'unit', icon: IconHome },
+  { label: 'Add tenant', path: '/tenants', create: 'tenant', icon: IconUsers },
+  { label: 'Add tenancy', path: '/leases', create: 'tenancy', icon: IconFileInvoice },
+  { label: 'Create service charge budget', path: '/service-charges', create: 'budget', icon: IconReceiptTax },
+  { label: 'Record payment', path: '/payments', create: 'payment', icon: IconReceipt }
 ];
 
 const MainLayout = () => {
   const { user, logout } = useAuth();
-  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const isPropertiesPage = location.pathname.startsWith('/properties');
-  const isTenantsPage = location.pathname.startsWith('/tenants');
-  const isLeasesPage = location.pathname.startsWith('/leases');
-  const isPaymentsPage = location.pathname.startsWith('/payments');
-  const isServiceChargesPage = location.pathname.startsWith('/service-charges');
-  const isRemindersPage = location.pathname.startsWith('/reminders');
-  const isReportsPage = location.pathname.startsWith('/reports');
-  const isSettingsPage = location.pathname.startsWith('/settings');
-  const pageTitle = isPropertiesPage ? 'Properties' : isTenantsPage ? 'Tenants' : isLeasesPage ? 'Leases' : isPaymentsPage ? 'Payments' : isServiceChargesPage ? 'Service Charges' : isRemindersPage ? 'Reminders' : isReportsPage ? 'Reports' : isSettingsPage ? 'Settings' : 'Dashboard';
-  const pageSubtitle = isPropertiesPage
-    ? 'Manage portfolio records and lettable space'
-    : isTenantsPage
-      ? 'Manage tenant records and contact details'
-      : isLeasesPage
-        ? 'Manage tenancy terms, rent, and renewal dates'
-        : isPaymentsPage
-          ? 'Track rent and service charge payments'
-          : isServiceChargesPage
-            ? 'Manage service charge demands and line items'
-            : isRemindersPage
-              ? 'Manage scheduled notices and acknowledgements'
-              : isReportsPage
-                ? 'Review arrears, balances, and expiring leases'
-                : isSettingsPage
-                  ? 'Manage account and workspace basics'
-                  : 'Welcome back to Tenora';
-  // const actionLabel = isTenantsPage ? 'Add Tenant' : isLeasesPage ? 'Add Lease' : isPaymentsPage ? 'Add Payment' : isServiceChargesPage ? 'Add Demand' : isRemindersPage ? 'Add Reminder' : isReportsPage ? 'Refresh' : isSettingsPage ? 'Profile' : 'Add Property';
-  const actionPath = isTenantsPage ? '/tenants' : isLeasesPage ? '/leases' : isPaymentsPage ? '/payments' : isServiceChargesPage ? '/service-charges' : isRemindersPage ? '/reminders' : isReportsPage ? '/reports' : isSettingsPage ? '/settings' : '/properties';
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isQuickMenuOpen, setIsQuickMenuOpen] = useState(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const displayName = user?.fullName || user?.full_name || user?.name || 'Tenora Admin';
   const displayEmail = user?.email || 'admin workspace';
+  const displayRole = user?.role || user?.user_role || 'Administrator';
+  const initials = displayName.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'TA';
+  const currentPage = useMemo(
+    () => pageMeta.find((item) => item.match.test(location.pathname)) || { title: 'Tenora', parent: 'Workspace' },
+    [location.pathname]
+  );
 
-  const renderNavLinks = (onNavigate) => navItems.map((item) => {
-    const Icon = item.icon;
+  const navigateToCreate = (action) => {
+    setIsQuickMenuOpen(false);
+    setIsMobileNavOpen(false);
+    navigate(action.path, { state: { openCreate: action.create } });
+  };
 
-    return (
-      <NavLink
-        key={item.path}
-        to={item.path}
-        onClick={onNavigate}
-        className={({ isActive }) =>
-          `d-flex align-items-center gap-3 px-3 py-3 rounded-4 text-decoration-none fw-semibold ${
-            isActive ? 'bg-white text-success shadow-sm' : 'text-white'
-          }`
-        }
-        style={({ isActive }) => ({
-          background: isActive ? '#ffffff' : 'rgba(255,255,255,.08)'
+  const handleSearch = (event) => {
+    event.preventDefault();
+    const term = search.trim();
+    if (!term) return;
+    navigate(`/properties?search=${encodeURIComponent(term)}`);
+  };
+
+  const confirmLogout = () => {
+    setIsLogoutModalOpen(false);
+    logout();
+  };
+
+  const renderNavGroups = (onNavigate) => navGroups.map((group, groupIndex) => (
+    <div className="tenora-sidebar-group" key={group.label || `nav-${groupIndex}`}>
+      {group.label && <div className="tenora-sidebar-label">{group.label}</div>}
+      <div className="tenora-sidebar-links">
+        {group.items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              onClick={onNavigate}
+              className={({ isActive }) => `tenora-sidebar-link ${isActive ? 'is-active' : ''}`}
+            >
+              <span className="tenora-sidebar-link-icon"><Icon size={19} /></span>
+              <span>{item.label}</span>
+              <IconChevronRight className="tenora-sidebar-chevron" size={15} />
+            </NavLink>
+          );
         })}
-      >
-        <Icon size={22} />
-        <span>{item.label}</span>
-      </NavLink>
-    );
-  });
+      </div>
+    </div>
+  ));
+
+  const brand = (
+    <div className="tenora-brand">
+      <div className="tenora-brand-mark">
+        <IconBuildingCommunity size={25} />
+      </div>
+      <div className="tenora-brand-copy">
+        <h2>Tenora</h2>
+        <small>Property Management</small>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="min-vh-100 d-flex" style={{ background: '#f8fffb' }}>
-      <aside
-        className="d-none d-lg-flex flex-column p-4"
-        style={{
-          width: 280,
-          background: 'linear-gradient(180deg, #064e3b 0%, #059669 100%)',
-          color: '#fff'
-        }}
-      >
-        <div className="d-flex align-items-center gap-3 mb-5">
-          <div
-            className="d-flex align-items-center justify-content-center rounded-4 bg-white"
-            style={{ width: 52, height: 52, color: '#059669' }}
-          >
-            <IconBuildingCommunity size={28} />
+    <div className="tenora-shell min-vh-100 d-flex">
+      <aside className="tenora-desktop-sidebar d-none d-lg-flex flex-column">
+        <div className="tenora-sidebar-brand">{brand}<span className="tenora-workspace-badge">MVP</span></div>
+        <nav className="tenora-sidebar-nav flex-grow-1">{renderNavGroups()}</nav>
+        <div className="tenora-sidebar-footer">
+          <AccessCountdown sidebar />
+          <div className="tenora-sidebar-account">
+            <span className="tenora-account-avatar">{initials}</span>
+            <div>
+              <strong>{displayName}</strong>
+              <small>{displayRole}</small>
+            </div>
           </div>
-          <div>
-            <h2 className="h2 fw-bold mb-0">Tenora</h2>
-            <small style={{ color: 'rgba(255,255,255,.75)' }}>Property Management</small>
-          </div>
-        </div>
-
-        <nav className="d-grid gap-2">
-          {renderNavLinks()}
-        </nav>
-
-        <div className="mt-auto d-grid gap-3">
-          <div className="p-3 rounded-4" style={{ background: 'rgba(255,255,255,.12)' }}>
-            <div className="fw-bold text-truncate">{displayName}</div>
-            <small className="d-block text-truncate" style={{ color: 'rgba(255,255,255,.72)' }}>{displayEmail}</small>
-          </div>
-          <button
-            className="btn w-100 rounded-4 fw-bold"
-            type="button"
-            onClick={logout}
-            style={{
-              background: 'rgba(255,255,255,.15)',
-              color: '#fff'
-            }}
-          >
-            <IconLogout size={20} className="me-2" />
-            Logout
-          </button>
+          <div className="tenora-sidebar-email">{displayEmail}</div>
         </div>
       </aside>
 
       {isMobileNavOpen && (
-        <div className="position-fixed top-0 start-0 w-100 h-100 d-lg-none" style={{ zIndex: 1060 }}>
-          <button
-            className="position-absolute top-0 start-0 w-100 h-100 border-0"
-            type="button"
-            aria-label="Close menu"
-            onClick={() => setIsMobileNavOpen(false)}
-            style={{ background: 'rgba(15, 23, 42, 0.48)' }}
-          />
-          <aside
-            className="position-relative h-100 p-4 d-flex flex-column"
-            style={{
-              width: 'min(86vw, 340px)',
-              background: 'linear-gradient(180deg, #064e3b 0%, #059669 100%)',
-              color: '#fff'
-            }}
-          >
-            <div className="d-flex align-items-center justify-content-between gap-3 mb-4">
-              <div className="d-flex align-items-center gap-3">
-                <div className="d-flex align-items-center justify-content-center rounded-4 bg-white" style={{ width: 48, height: 48, color: '#059669' }}>
-                  <IconBuildingCommunity size={26} />
-                </div>
-                <div>
-                  <h2 className="h2 fw-bold mb-0">Tenora</h2>
-                  <small style={{ color: 'rgba(255,255,255,.75)' }}>Property Management</small>
-                </div>
-              </div>
-              <button className="btn btn-light btn-icon rounded-4" type="button" onClick={() => setIsMobileNavOpen(false)}>
-                <IconX size={20} />
-              </button>
+        <div className="tenora-mobile-nav d-lg-none">
+          <button className="tenora-mobile-nav-backdrop" type="button" aria-label="Close menu" onClick={() => setIsMobileNavOpen(false)} />
+          <aside className="tenora-mobile-sidebar">
+            <div className="tenora-mobile-sidebar-header">
+              {brand}
+              <button className="tenora-sidebar-close" type="button" onClick={() => setIsMobileNavOpen(false)} aria-label="Close navigation"><IconX size={19} /></button>
             </div>
-
-            <nav className="d-grid gap-2">
-              {renderNavLinks(() => setIsMobileNavOpen(false))}
-            </nav>
-
-            <div className="mt-auto d-grid gap-3">
-              <div className="p-3 rounded-4" style={{ background: 'rgba(255,255,255,.12)' }}>
-                <div className="fw-bold text-truncate">{displayName}</div>
-                <small className="d-block text-truncate" style={{ color: 'rgba(255,255,255,.72)' }}>{displayEmail}</small>
+            <nav className="tenora-sidebar-nav flex-grow-1">{renderNavGroups(() => setIsMobileNavOpen(false))}</nav>
+            <div className="tenora-sidebar-footer">
+              <AccessCountdown sidebar />
+              <div className="tenora-sidebar-account">
+                <span className="tenora-account-avatar">{initials}</span>
+                <div><strong>{displayName}</strong><small>{displayRole}</small></div>
               </div>
-              <button className="btn w-100 rounded-4 fw-bold" type="button" onClick={logout} style={{ background: 'rgba(255,255,255,.15)', color: '#fff' }}>
-                <IconLogout size={20} className="me-2" />
-                Logout
-              </button>
+              <div className="tenora-sidebar-email">{displayEmail}</div>
             </div>
           </aside>
         </div>
       )}
 
-      <main className="flex-fill">
-        <header className="bg-white border-bottom">
-          <div className="container-fluid px-4 py-3 d-flex align-items-center justify-content-between">
-            <div className="d-flex align-items-center gap-3">
-              <button className="btn btn-light d-lg-none" type="button" onClick={() => setIsMobileNavOpen(true)}>
-                <IconMenu2 size={22} />
-              </button>
-              <div>
-                <h1 className="h3 fw-bold mb-0">{pageTitle}</h1>
-                <small className="text-secondary">{pageSubtitle}</small>
+      <main className="tenora-app-main flex-fill">
+        <header className="tenora-topbar">
+          <div className="tenora-topbar-inner">
+            <div className="tenora-topbar-context">
+              <button className="tenora-mobile-menu d-lg-none" type="button" onClick={() => setIsMobileNavOpen(true)} aria-label="Open navigation"><IconMenu2 size={21} /></button>
+              <div className="tenora-page-context">
+                <div className="tenora-breadcrumb">{currentPage.parent} / {currentPage.title}</div>
+                <div className="tenora-topbar-title">{currentPage.title}</div>
               </div>
             </div>
 
-            {/* <button
-              className="btn rounded-4 fw-bold text-white"
-              type="button"
-              onClick={() => navigate(actionPath)}
-              style={{ background: '#059669', borderColor: '#059669' }}
-            >
-              {actionLabel}
-            </button> */}
+            <div className="tenora-topbar-actions">
+              <form className="tenora-global-search input-icon" onSubmit={handleSearch}>
+                <span className="input-icon-addon"><IconSearch size={17} /></span>
+                <input className="form-control" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search properties..." aria-label="Search properties" />
+              </form>
+              <div className="tenora-quick-menu">
+                <button className="tenora-create-button" type="button" onClick={() => setIsQuickMenuOpen((value) => !value)} aria-expanded={isQuickMenuOpen}>
+                  <IconPlus size={17} /> <span>New</span> <IconChevronDown size={14} />
+                </button>
+                {isQuickMenuOpen && (
+                  <>
+                    <button className="tenora-quick-menu-backdrop" type="button" aria-label="Close quick actions" onClick={() => setIsQuickMenuOpen(false)} />
+                    <div className="tenora-quick-menu-panel">
+                      <div className="tenora-quick-menu-heading"><strong>Create new</strong><small>Start a common workflow</small></div>
+                      {quickActions.map((action) => {
+                        const Icon = action.icon;
+                        return <button type="button" key={action.label} onClick={() => navigateToCreate(action)}><span><Icon size={17} /></span>{action.label}</button>;
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="tenora-topbar-access"><AccessCountdown /></div>
+              <div className="tenora-topbar-account d-none d-md-flex">
+                <span>{initials}</span>
+                <div><strong>{displayName}</strong><small>{displayRole}</small></div>
+              </div>
+              <button className="tenora-logout-button" type="button" onClick={() => setIsLogoutModalOpen(true)} aria-label="Logout" title="Logout">
+                <IconLogout size={19} />
+              </button>
+            </div>
           </div>
         </header>
 
-        <div className="container-fluid p-4">
-          <Outlet />
-        </div>
+        <div className="container-fluid tenora-main-content"><Outlet /></div>
       </main>
+
+      <ConfirmModal
+        isOpen={isLogoutModalOpen}
+        title="Log out of Tenora?"
+        message="Are you sure you want to log out of your account?"
+        confirmLabel="Log out"
+        icon={IconLogout}
+        onCancel={() => setIsLogoutModalOpen(false)}
+        onConfirm={confirmLogout}
+      />
     </div>
   );
 };

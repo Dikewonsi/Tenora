@@ -1,464 +1,220 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  IconAlertCircle,
-  IconBell,
+  IconAlertTriangle,
   IconBuildingEstate,
-  IconCalendarEvent,
   IconCashBanknote,
-  IconClipboardList,
   IconFileInvoice,
-  IconHomeStats,
-  IconReportMoney,
+  IconPlus,
+  IconReceipt,
   IconRulerMeasure,
   IconUsers
 } from '@tabler/icons-react';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { useNavigate } from 'react-router-dom';
 import apiClient from '../api/apiClient';
+import { useAuth } from '../context/AuthContext';
+import { DashboardWidget, EmptyState, MiniMetric, RingSummary, StatusBadge } from '../components/TenoraUI';
 
-const money = new Intl.NumberFormat('en-NG', {
-  style: 'currency',
-  currency: 'NGN',
-  maximumFractionDigits: 0
-});
+const money = new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 });
+const getExpiryFilter = (daysRemaining) => {
+  const days = Number(daysRemaining);
+  if (days < 30) return 'under30';
+  if (days < 60) return '30';
+  if (days < 90) return '60';
+  return '90';
+};
+
+const getMonthRange = (monthValue) => {
+  const [year, month] = monthValue.split('-').map(Number);
+  const end = new Date(year, month, 0);
+  return {
+    from: `${monthValue}-01`,
+    to: `${year}-${String(month).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`
+  };
+};
 
 const Dashboard = () => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const today = new Date();
+  const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const [month, setMonth] = useState(currentMonth);
   const [summary, setSummary] = useState(null);
+  const [monthPayments, setMonthPayments] = useState([]);
+  const [overdueDemands, setOverdueDemands] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    let isMounted = true;
+    let active = true;
+    const range = getMonthRange(month);
 
-    apiClient.get('/dashboard/summary')
-      .then((response) => {
-        if (isMounted) {
-          setSummary(response.data.data.summary);
-        }
+    Promise.all([
+      apiClient.get('/dashboard/summary'),
+      apiClient.get('/payments', { params: { status: 'paid', date_from: range.from, date_to: range.to, limit: 100 } }),
+      apiClient.get('/service-charge-demands', { params: { status: 'overdue', limit: 20 } })
+    ])
+      .then(([summaryResponse, paymentResponse, demandResponse]) => {
+        if (!active) return;
+        setSummary(summaryResponse.data.data.summary);
+        setMonthPayments(paymentResponse.data.data.payments || []);
+        setOverdueDemands(demandResponse.data.data.demands || []);
+        setError('');
       })
       .catch((dashboardError) => {
-        if (isMounted) {
-          setError(dashboardError.response?.data?.message || dashboardError.message);
-        }
+        if (active) setError(dashboardError.response?.data?.message || dashboardError.message);
       })
       .finally(() => {
-        if (isMounted) {
-          setIsLoading(false);
-        }
+        if (active) setIsLoading(false);
       });
 
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+    return () => { active = false; };
+  }, [month]);
 
   const counts = summary?.counts || {};
-  const payments = summary?.payments || {};
   const demands = summary?.serviceChargeDemands || {};
-  const reminders = summary?.reminders || {};
-  const activeLeaseCount = Number(counts.active_leases || counts.leases || 0);
+  const expiry = summary?.rentExpiry || { buckets: {}, leases: [] };
   const totalUnits = Number(counts.total_units || 0);
-  const totalLettableSpace = Number(counts.total_lettable_space || 0);
-  const expiringLeaseCount = Number(counts.expiring_leases_90_days || summary?.expiringLeases?.length || 0);
+  const occupiedUnits = Number(counts.occupied_units || 0);
+  const vacantUnits = Number(counts.vacant_units || 0);
+  const occupancyRate = totalUnits ? Math.round((occupiedUnits / totalUnits) * 100) : 0;
+  const totalDemanded = Number(demands.total_demanded || 0);
+  const totalDemandPaid = Number(demands.total_demand_paid || 0);
+  const serviceChargeCollectionRate = totalDemanded
+    ? Math.min(100, Math.round((totalDemandPaid / totalDemanded) * 100))
+    : 0;
+  const recordedPaymentsTotal = monthPayments.reduce((total, payment) => total + Number(payment.amount_paid || 0), 0);
+  const rentPaymentsTotal = monthPayments
+    .filter((payment) => payment.payment_category === 'rent')
+    .reduce((total, payment) => total + Number(payment.amount_paid || 0), 0);
+  const serviceChargePaymentsTotal = monthPayments
+    .filter((payment) => payment.payment_category === 'service_charge')
+    .reduce((total, payment) => total + Number(payment.amount_paid || 0), 0);
+  const otherPaymentsTotal = recordedPaymentsTotal - rentPaymentsTotal - serviceChargePaymentsTotal;
+  const expiringCount = (expiry.leases || []).length;
+  const firstName = (user?.fullName || user?.full_name || user?.name || 'Manager').split(' ')[0];
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const monthLabel = new Date(`${month}-01T12:00:00`).toLocaleDateString('en-NG', { month: 'long', year: 'numeric' });
 
-  const chartData = useMemo(() => ([
-    { name: 'Properties', value: Number(counts.properties || 0) },
-    { name: 'Tenants', value: Number(counts.tenants || 0) },
-    { name: 'Leases', value: Number(counts.leases || 0) },
-    { name: 'Payments', value: Number(counts.payments || 0) }
-  ]), [counts.leases, counts.payments, counts.properties, counts.tenants]);
-
-  const stats = [
-    {
-      label: 'Properties',
-      value: counts.properties || 0,
-      icon: IconBuildingEstate
-    },
-    {
-      label: 'Tenants',
-      value: counts.tenants || 0,
-      icon: IconUsers
-    },
-    {
-      label: 'Active leases',
-      value: activeLeaseCount,
-      icon: IconHomeStats
-    },
-    {
-      label: 'Payments',
-      value: counts.payments || 0,
-      icon: IconCashBanknote
-    }
+  const openCreate = (path, create) => navigate(path, { state: { openCreate: create } });
+  const quickActions = [
+    ['Property', '/properties', 'property', IconBuildingEstate],
+    ['Tenant', '/tenants', 'tenant', IconUsers],
+    ['Tenancy', '/leases', 'tenancy', IconFileInvoice],
+    ['Payment', '/payments', 'payment', IconCashBanknote]
   ];
-
-  const operationalMetrics = [
-    {
-      label: 'Total units',
-      value: totalUnits.toLocaleString(),
-      detail: 'Across managed properties',
-      icon: IconBuildingEstate
-    },
-    {
-      label: 'Lettable space',
-      value: `${totalLettableSpace.toLocaleString()} sqm`,
-      detail: 'Tracked portfolio space',
-      icon: IconRulerMeasure
-    },
-    {
-      label: 'Open demands',
-      value: demands.open_demands || 0,
-      detail: 'Draft, issued, or pending',
-      icon: IconClipboardList
-    },
-    {
-      label: 'Expiring leases',
-      value: expiringLeaseCount,
-      detail: 'Within the next 90 days',
-      icon: IconCalendarEvent
-    }
-  ];
-
-  const paymentBreakdown = [
-    ['Total paid', money.format(Number(payments.total_paid || 0))],
-    ['Rent paid', money.format(Number(payments.rent_paid || 0))],
-    ['Service charge paid', money.format(Number(payments.service_charge_paid || 0))],
-    ['Service charge balance', money.format(Number(demands.total_demand_balance || 0))]
-  ];
-
-  const reminderTiles = [
-    ['Pending', reminders.pending || 0],
-    ['Due', reminders.due_today_or_overdue || 0],
-    ['Ack.', reminders.acknowledged || 0]
+  const expiryOptions = [
+    ['Expiring soon', 'expiring_soon', 'under30'],
+    ['30 days', '30_days', '30'],
+    ['60 days', '60_days', '60'],
+    ['90 days', '90_days', '90']
   ];
 
   return (
-  <div
-    className="d-grid gap-4"
-    style={{
-      background:
-        'radial-gradient(circle at top left, rgba(16, 185, 129, 0.10), transparent 28%), #f8fffb',
-      minHeight: '100vh'
-    }}
-  >
-    <section
-      className="card border-0 overflow-hidden"
-      style={{
-        borderRadius: 32,
-        background: '#ffffff',
-        boxShadow: '0 24px 70px rgba(15, 23, 42, 0.08)'
-      }}
-    >
-      <div className="card-body p-4 p-xl-5">
-        <div className="row g-4 align-items-center">
-          <div className="col-12 col-xl-7">
-            <span
-              className="badge rounded-pill border-0 mb-3 px-3 py-2"
-              style={{ background: '#d1fae5', color: '#047857' }}
-            >
-              Premium Property Operations
-            </span>
-
-            <h1 className="display-6 fw-bold mb-2" style={{ color: '#101816' }}>
-              Portfolio Dashboard
-            </h1>
-
-            <p className="fs-4 text-secondary mb-0" style={{ maxWidth: 720 }}>
-              Monitor properties, tenants, leases, payments, service charges, and reminders from one executive workspace.
-            </p>
-          </div>
-
-          <div className="col-12 col-xl-5">
-            <div
-              className="p-4 text-white h-100"
-              style={{
-                borderRadius: 26,
-                background: 'linear-gradient(135deg, #064e3b 0%, #059669 55%, #10b981 100%)',
-                boxShadow: '0 22px 45px rgba(5, 150, 105, 0.26)'
-              }}
-            >
-              <div className="d-flex align-items-center justify-content-between gap-3 mb-4">
-                <div>
-                  <div style={{ color: 'rgba(255,255,255,.72)' }}>Service charge balance</div>
-                  <div className="h1 fw-bold mb-0">
-                    {money.format(Number(demands.total_demand_balance || 0))}
-                  </div>
-                </div>
-
-                <div
-                  className="d-flex align-items-center justify-content-center bg-white"
-                  style={{
-                    width: 58,
-                    height: 58,
-                    borderRadius: 20,
-                    color: '#059669'
-                  }}
-                >
-                  <IconReportMoney size={30} />
-                </div>
-              </div>
-
-              <div className="row g-3">
-                <div className="col-6">
-                  <div style={{ color: 'rgba(255,255,255,.72)' }}>Properties</div>
-                  <div className="h3 fw-bold mb-0">{isLoading ? '...' : stats[0]?.value || 0}</div>
-                </div>
-                <div className="col-6">
-                  <div style={{ color: 'rgba(255,255,255,.72)' }}>Tenants</div>
-                  <div className="h3 fw-bold mb-0">{isLoading ? '...' : stats[1]?.value || 0}</div>
-                </div>
-              </div>
-            </div>
+    <div className="tenora-dashboard">
+      <header className="tenora-dashboard-intro">
+        <div>
+          <div className="tenora-eyebrow">Portfolio overview</div>
+          <h1>{greeting}, {firstName}</h1>
+          <p>Here is what needs attention across your properties today.</p>
+        </div>
+        <div className="tenora-dashboard-tools">
+          <label className="tenora-month-control">
+            <span>Payments month</span>
+            <input type="month" value={month} onChange={(event) => { setIsLoading(true); setMonth(event.target.value); }} />
+          </label>
+          <div className="tenora-quick-actions">
+            {quickActions.map(([label, path, create, Icon]) => (
+              <button type="button" key={label} onClick={() => openCreate(path, create)}>
+                <Icon size={15} /><IconPlus size={11} /> <span>{label}</span>
+              </button>
+            ))}
           </div>
         </div>
-      </div>
-    </section>
+      </header>
 
-    {error && (
-      <div className="alert alert-warning rounded-4 border-0 shadow-sm mb-0" role="alert">
-        {error}
-      </div>
-    )}
+      {error && <div className="alert alert-danger border-0 mb-0">{error}</div>}
 
-    <section className="row g-3" aria-busy={isLoading}>
-      {stats.map((stat) => {
-        const Icon = stat.icon;
+      <section className="tenora-dashboard-grid">
+        <DashboardWidget title="Portfolio inventory" description="Current records across the workspace" actionLabel="View properties" onAction={() => navigate('/properties')}>
+          <div className="tenora-portfolio-facts">
+            <button type="button" onClick={() => navigate('/properties')}><span className="tenora-icon-tile"><IconBuildingEstate size={18} /></span><span><small>Properties</small><strong>{isLoading ? '...' : counts.properties || 0}</strong></span></button>
+            <button type="button" onClick={() => navigate('/tenants')}><span className="tenora-icon-tile is-blue"><IconUsers size={18} /></span><span><small>Tenant records</small><strong>{isLoading ? '...' : counts.tenants || 0}</strong></span></button>
+            <button type="button" onClick={() => navigate('/leases')}><span className="tenora-icon-tile is-amber"><IconFileInvoice size={18} /></span><span><small>Active tenancies</small><strong>{isLoading ? '...' : counts.active_leases || 0}</strong></span></button>
+            <button type="button" onClick={() => navigate('/units')}><span className="tenora-icon-tile is-slate"><IconRulerMeasure size={18} /></span><span><small>Active floor area</small><strong>{isLoading ? '...' : `${Number(counts.total_lettable_space || 0).toLocaleString()} sqm`}</strong></span></button>
+          </div>
+        </DashboardWidget>
 
-        return (
-          <div className="col-12 col-sm-6 col-xl-3" key={stat.label}>
-            <div
-              className="card border-0 h-100"
-              style={{
-                borderRadius: 26,
-                boxShadow: '0 16px 40px rgba(15, 23, 42, 0.06)'
-              }}
-            >
-              <div className="card-body p-4">
-                <div className="d-flex align-items-start justify-content-between gap-3">
-                  <div>
-                    <p className="text-secondary mb-2">{stat.label}</p>
-                    <h2 className="fw-bold mb-0" style={{ color: '#101816' }}>
-                      {isLoading ? '...' : stat.value}
-                    </h2>
-                  </div>
+        <DashboardWidget title="Occupancy" description="Live active-unit utilisation" actionLabel="View units" onAction={() => navigate('/units')}>
+          <RingSummary value={occupancyRate} label="occupied" detail={<><strong>{occupiedUnits}</strong> occupied units</>} />
+          <div className="tenora-occupancy-legend">
+            <span><i className="is-occupied" /> Occupied <strong>{occupiedUnits}</strong></span>
+            <span><i className="is-vacant" /> Vacant <strong>{vacantUnits}</strong></span>
+            <span><i className="is-total" /> Active units <strong>{totalUnits}</strong></span>
+          </div>
+        </DashboardWidget>
 
-                  <div
-                    className="d-flex align-items-center justify-content-center flex-shrink-0"
-                    style={{
-                      width: 52,
-                      height: 52,
-                      borderRadius: 18,
-                      background: '#ecfdf5',
-                      color: '#059669'
-                    }}
-                  >
-                    <Icon size={25} />
-                  </div>
-                </div>
-              </div>
+        <DashboardWidget title="Service-charge collection" description="Issued demands across all periods" actionLabel="Open service charges" onAction={() => navigate('/service-charges')}>
+          <div className="tenora-widget-hero-value">{isLoading ? '...' : money.format(Number(demands.total_demand_balance || 0))}</div>
+          <div className="tenora-widget-hero-label">Outstanding balance</div>
+          <div className="tenora-collection-progress">
+            <div><span>Collection rate</span><strong>{serviceChargeCollectionRate}%</strong></div>
+            <span><i style={{ width: `${serviceChargeCollectionRate}%` }} /></span>
+          </div>
+          <div className="tenora-inline-metrics">
+            <MiniMetric label="Demanded" value={money.format(totalDemanded)} />
+            <MiniMetric label="Paid" value={money.format(totalDemandPaid)} tone="green" />
+          </div>
+        </DashboardWidget>
+
+        <DashboardWidget className="tenora-dashboard-widget-wide" title="Rent expiry calendar" description={`${expiringCount} active tenancies end within 90 days`} actionLabel="View tenancy expiry" onAction={() => navigate('/leases')}>
+          <div className="tenora-dashboard-expiry">
+            <div className="tenora-expiry-options">
+              {expiryOptions.map(([label, key, filter]) => (
+                <button type="button" key={key} onClick={() => navigate('/leases', { state: { expiryBucket: filter } })}>
+                  <span>{label}</span><strong>{expiry.buckets?.[key]?.length || 0}</strong>
+                </button>
+              ))}
+            </div>
+            <div className="tenora-due-list">
+              {(expiry.leases || []).slice(0, 4).map((tenancy) => (
+                <button type="button" key={tenancy.id} onClick={() => navigate('/leases', { state: { expiryBucket: getExpiryFilter(tenancy.days_remaining) } })}>
+                  <span className="tenora-date-chip"><strong>{new Date(tenancy.end_date).getDate()}</strong><small>{new Date(tenancy.end_date).toLocaleDateString('en-NG', { month: 'short' })}</small></span>
+                  <span><strong>{tenancy.tenant_name}</strong><small>{tenancy.property_name} · {tenancy.unit_name || 'No unit'}</small></span>
+                  <StatusBadge status={Number(tenancy.days_remaining) < 30 ? 'overdue' : 'pending'} label={`${tenancy.days_remaining}d`} />
+                </button>
+              ))}
+              {!isLoading && (expiry.leases || []).length === 0 && <EmptyState compact title="No upcoming due dates" description="Nothing expires in the next 90 days." />}
             </div>
           </div>
-        );
-      })}
-    </section>
+        </DashboardWidget>
 
-    <section className="row g-3">
-      {operationalMetrics.map((metric) => {
-        const Icon = metric.icon;
-
-        return (
-          <div className="col-12 col-md-6 col-xl-3" key={metric.label}>
-            <div
-              className="card border-0 h-100"
-              style={{
-                borderRadius: 24,
-                background: '#ffffff',
-                boxShadow: '0 12px 32px rgba(15, 23, 42, 0.045)'
-              }}
-            >
-              <div className="card-body p-4">
-                <div className="d-flex align-items-center gap-3 mb-3">
-                  <div
-                    className="d-flex align-items-center justify-content-center flex-shrink-0"
-                    style={{
-                      width: 46,
-                      height: 46,
-                      borderRadius: 16,
-                      background: '#d1fae5',
-                      color: '#047857'
-                    }}
-                  >
-                    <Icon size={22} />
-                  </div>
-
-                  <div>
-                    <div className="fw-bold" style={{ color: '#101816' }}>
-                      {metric.value}
-                    </div>
-                    <div className="text-secondary small">{metric.label}</div>
-                  </div>
-                </div>
-
-                <div className="text-secondary small">{metric.detail}</div>
-              </div>
-            </div>
+        <DashboardWidget title="Monthly receipts" description={`Paid receipts recorded in ${monthLabel}`} actionLabel="View payments" onAction={() => navigate('/payments')}>
+          <div className="tenora-widget-hero-value">{isLoading ? '...' : money.format(recordedPaymentsTotal)}</div>
+          <div className="tenora-widget-hero-label">{monthPayments.length} recorded receipt{monthPayments.length === 1 ? '' : 's'}</div>
+          <div className="tenora-collection-bars">
+            <div><span><i className="is-rent" style={{ width: `${recordedPaymentsTotal ? (rentPaymentsTotal / recordedPaymentsTotal) * 100 : 0}%` }} /></span><small>Rent</small><strong>{money.format(rentPaymentsTotal)}</strong></div>
+            <div><span><i className="is-service" style={{ width: `${recordedPaymentsTotal ? (serviceChargePaymentsTotal / recordedPaymentsTotal) * 100 : 0}%` }} /></span><small>Service charge</small><strong>{money.format(serviceChargePaymentsTotal)}</strong></div>
+            {otherPaymentsTotal > 0 && <div><span><i className="is-other" style={{ width: `${(otherPaymentsTotal / recordedPaymentsTotal) * 100}%` }} /></span><small>Deposit / other</small><strong>{money.format(otherPaymentsTotal)}</strong></div>}
           </div>
-        );
-      })}
-    </section>
+          <button className="tenora-widget-primary-action" type="button" onClick={() => openCreate('/payments', 'payment')}><IconPlus size={15} /> Record payment</button>
+        </DashboardWidget>
 
-    <section className="row g-4">
-      <div className="col-12 col-xl-8">
-        <div
-          className="card border-0 h-100"
-          style={{
-            borderRadius: 30,
-            boxShadow: '0 20px 55px rgba(15, 23, 42, 0.065)'
-          }}
-        >
-          <div className="card-body p-4 p-xl-5">
-            <div className="d-flex flex-column flex-md-row justify-content-between align-items-start gap-3 mb-4">
-              <div>
-                <h2 className="h3 fw-bold mb-1" style={{ color: '#101816' }}>
-                  Portfolio Activity
-                </h2>
-                <p className="text-secondary mb-0">
-                  A quick overview of your core property management records.
-                </p>
+        <DashboardWidget title="Overdue demand cases" description={`${overdueDemands.length} overdue demand${overdueDemands.length === 1 ? '' : 's'} returned`} actionLabel="Open service charges" onAction={() => navigate('/service-charges')}>
+          <div className="tenora-compact-list">
+            {overdueDemands.slice(0, 4).map((demand) => (
+              <div key={demand.id}>
+                <span className="tenora-list-icon is-red"><IconAlertTriangle size={16} /></span>
+                <span><strong>{demand.tenant_name || 'Unassigned demand'}</strong><small>{demand.property_name} · {demand.unit_name || demand.unit_number || 'No unit'}</small></span>
+                <strong>{money.format(Number(demand.balance || 0))}</strong>
               </div>
-
-              <span
-                className="badge rounded-pill border-0 px-3 py-2"
-                style={{ background: '#ecfdf5', color: '#047857' }}
-              >
-                Live summary
-              </span>
-            </div>
-
-            <div style={{ height: 350 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 10, right: 10, left: -12, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                  <XAxis dataKey="name" tickLine={false} axisLine={false} />
-                  <YAxis allowDecimals={false} tickLine={false} axisLine={false} />
-                  <Tooltip
-                    cursor={{ fill: 'rgba(16, 185, 129, 0.08)' }}
-                    contentStyle={{
-                      border: 0,
-                      borderRadius: 16,
-                      boxShadow: '0 14px 32px rgba(15, 23, 42, 0.12)'
-                    }}
-                  />
-                  <Bar dataKey="value" fill="#059669" radius={[10, 10, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            ))}
+            {!isLoading && overdueDemands.length === 0 && <EmptyState compact title="No overdue demands" description="There are no overdue service-charge cases in the current response." icon={IconReceipt} />}
           </div>
-        </div>
-      </div>
-
-      <div className="col-12 col-xl-4">
-        <div className="d-grid gap-4">
-          <div
-            className="card border-0"
-            style={{
-              borderRadius: 30,
-              boxShadow: '0 20px 55px rgba(15, 23, 42, 0.065)'
-            }}
-          >
-            <div className="card-body p-4">
-              <div className="d-flex align-items-center justify-content-between gap-3 mb-4">
-                <div>
-                  <h3 className="fw-bold mb-1" style={{ color: '#101816' }}>
-                    Financial Snapshot
-                  </h3>
-                  <p className="text-secondary mb-0">Payments and service charge movement.</p>
-                </div>
-
-                <div
-                  className="d-flex align-items-center justify-content-center flex-shrink-0"
-                  style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 16,
-                    background: '#d1fae5',
-                    color: '#047857'
-                  }}
-                >
-                  <IconFileInvoice size={24} />
-                </div>
-              </div>
-
-              <div className="d-grid gap-3">
-                {paymentBreakdown.map(([label, value]) => (
-                  <div className="d-flex justify-content-between align-items-center gap-3" key={label}>
-                    <span className="text-secondary">{label}</span>
-                    <strong style={{ color: '#101816' }}>{value}</strong>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div
-            className="card border-0"
-            style={{
-              borderRadius: 30,
-              boxShadow: '0 20px 55px rgba(15, 23, 42, 0.065)'
-            }}
-          >
-            <div className="card-body p-4">
-              <div className="d-flex align-items-center justify-content-between gap-3 mb-4">
-                <div>
-                  <h3 className="fw-bold mb-1" style={{ color: '#101816' }}>
-                    Reminders
-                  </h3>
-                  <p className="text-secondary mb-0">Pending and acknowledged activity.</p>
-                </div>
-
-                <div
-                  className="d-flex align-items-center justify-content-center flex-shrink-0"
-                  style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 16,
-                    background: '#d1fae5',
-                    color: '#047857'
-                  }}
-                >
-                  <IconBell size={24} />
-                </div>
-              </div>
-
-              <div className="row g-2">
-                {reminderTiles.map(([label, value]) => (
-                  <div className="col-4" key={label}>
-                    <div
-                      className="rounded-4 p-3 text-center"
-                      style={{ background: '#ecfdf5' }}
-                    >
-                      <div className="fw-bold fs-3" style={{ color: '#101816' }}>
-                        {value}
-                      </div>
-                      <small className="text-secondary">{label}</small>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-4 p-3 rounded-4" style={{ background: '#f8fffb' }}>
-                <div className="d-flex align-items-start gap-2 text-secondary small">
-                  <IconAlertCircle size={18} style={{ color: '#059669', marginTop: 2 }} />
-                  <span>
-                    Reminder workflow tracks pending, sent, and acknowledged notices.
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  </div>
-);
+        </DashboardWidget>
+      </section>
+    </div>
+  );
 };
 
 export default Dashboard;

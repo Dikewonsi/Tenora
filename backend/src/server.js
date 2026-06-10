@@ -7,16 +7,17 @@ import notFound from './middleware/notFound.js';
 import errorHandler from './middleware/errorHandler.js';
 
 import healthRoutes from './routes/healthRoutes.js';
+import accessRoutes from './routes/accessRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import propertyRoutes from './routes/propertyRoutes.js';
+import unitRoutes from './routes/unitRoutes.js';
 import tenantRoutes from './routes/tenantRoutes.js';
 import leaseRoutes from './routes/leaseRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import serviceChargeDemandRoutes from './routes/serviceChargeDemandRoutes.js';
-import serviceChargeDemandItemRoutes from './routes/serviceChargeDemandItemRoutes.js';
-import reminderRoutes from './routes/reminderRoutes.js';
+import serviceChargeBudgetRoutes from './routes/serviceChargeBudgetRoutes.js';
+import serviceChargeAllocationRoutes from './routes/serviceChargeAllocationRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
-import reportRoutes from './routes/reportRoutes.js';
 
 dotenv.config();
 
@@ -43,7 +44,7 @@ app.use(express.urlencoded({
 // Add cors so frontend and backend can communicate
 const allowedOrigins = [
     'http://localhost:5173',
-    'https://payorbit.dikewonsi.cloud'
+    'https://tenora.dikewonsi.cloud'
 ];
 
 app.use(cors({
@@ -57,16 +58,17 @@ app.use(cors({
 */
 
 app.use('/api/health', healthRoutes);
+app.use('/api/access', accessRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/properties', propertyRoutes);
+app.use('/api/units', unitRoutes);
 app.use('/api/tenants', tenantRoutes);
 app.use('/api/leases', leaseRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/service-charge-demands', serviceChargeDemandRoutes);
-app.use('/api/service-charge-demand-items', serviceChargeDemandItemRoutes);
-app.use('/api/reminders', reminderRoutes);
+app.use('/api/service-charge-budgets', serviceChargeBudgetRoutes);
+app.use('/api/service-charge-allocations', serviceChargeAllocationRoutes);
 app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/reports', reportRoutes);
 
 /*
 |--------------------------------------------------------------------------

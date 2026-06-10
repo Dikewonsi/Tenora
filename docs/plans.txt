@@ -6,4 +6,4 @@ Active Leases
 Rent Arrears
 Outstanding Service Charges
 Leases Expiring in 90 Days
-Pending Reminders
+Rent Expiring Soon

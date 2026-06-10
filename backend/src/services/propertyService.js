@@ -2,16 +2,25 @@ import pool from '../db/pool.js';
 import { getPagination } from '../utils/pagination.js';
 
 const propertyColumns = `
-    id,
-    property_code,
-    property_name,
-    address,
-    location,
-    property_description,
-    total_units,
-    total_lettable_space,
-    created_at AS "createdAt",
-    updated_at AS "updatedAt"
+    properties.id,
+    properties.property_name,
+    properties.address,
+    properties.location,
+    properties.property_description,
+    COALESCE((
+        SELECT COUNT(*)
+        FROM units
+        WHERE units.property_id = properties.id
+          AND units.status = 'active'
+    ), 0)::int AS total_units,
+    COALESCE((
+        SELECT SUM(units.floor_area_sqm)
+        FROM units
+        WHERE units.property_id = properties.id
+          AND units.status = 'active'
+    ), 0) AS total_lettable_space,
+    properties.created_at AS "createdAt",
+    properties.updated_at AS "updatedAt"
 `;
 
 const getAllProperties = async (filters = {}) => {
@@ -25,7 +34,6 @@ const getAllProperties = async (filters = {}) => {
             WHERE (
                 $1::text IS NULL
                 OR property_name ILIKE '%' || $1 || '%'
-                OR property_code ILIKE '%' || $1 || '%'
                 OR location ILIKE '%' || $1 || '%'
                 OR address ILIKE '%' || $1 || '%'
             )
@@ -46,7 +54,6 @@ const getAllProperties = async (filters = {}) => {
             WHERE (
                 $1::text IS NULL
                 OR property_name ILIKE '%' || $1 || '%'
-                OR property_code ILIKE '%' || $1 || '%'
                 OR location ILIKE '%' || $1 || '%'
                 OR address ILIKE '%' || $1 || '%'
             )
@@ -87,14 +94,11 @@ const getPropertyById = async (id) => {
 
 const createProperty = async (propertyData) => {
     const {
-        property_code,
         property_name,
         name,
         address,
         location,
-        property_description,
-        total_units,
-        total_lettable_space
+        property_description
     } = propertyData;
 
     if(!address) {
@@ -105,73 +109,58 @@ const createProperty = async (propertyData) => {
 
     const result = await pool.query(`
         INSERT INTO properties (
-            property_code,
             property_name,
             address,
             location,
-            property_description,
-            total_units,
-            total_lettable_space
+            property_description
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING ${propertyColumns}
+        VALUES ($1, $2, $3, $4)
+        RETURNING id
         `,
         [
-            property_code,
             property_name || name,
             address,
             location,
-            property_description,
-            total_units,
-            total_lettable_space
+            property_description
         ]
     );
 
-    return result.rows[0];
+    return getPropertyById(result.rows[0].id);
 }
 
 const updateProperty = async (id, propertyData) => {
     const existingProperty = await getPropertyById(id);
 
     const {
-        property_code = existingProperty.property_code,
         property_name = existingProperty.property_name,
         name,
         address = existingProperty.address,
         location = existingProperty.location,
-        property_description = existingProperty.property_description,
-        total_units = existingProperty.total_units,
-        total_lettable_space = existingProperty.total_lettable_space
+        property_description = existingProperty.property_description
     } = propertyData;
 
     const result = await pool.query(
         `
             UPDATE properties
             SET
-                property_code = $1,
-                property_name = $2,
-                address = $3,
-                location = $4,
-                property_description = $5,
-                total_units = $6,
-                total_lettable_space = $7,
+                property_name = $1,
+                address = $2,
+                location = $3,
+                property_description = $4,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = $8
-            RETURNING ${propertyColumns}
+            WHERE id = $5
+            RETURNING id
         `,
         [
-            property_code,
             property_name || name,
             address,
             location,
             property_description,
-            total_units,
-            total_lettable_space,
             id
         ]
     );
 
-    return result.rows[0];
+    return getPropertyById(result.rows[0].id);
 };
 
 const deleteProperty = async (id) => {
@@ -184,7 +173,6 @@ const deleteProperty = async (id) => {
                 WHERE id = $1
                 RETURNING
                     id,
-                    property_code,
                     property_name,
                     address,
                     location,

@@ -9,6 +9,7 @@
     "dev": "nodemon src/server.js",
     "seed:user": "node src/scripts/createUser.js",
     "seed:demo": "node src/scripts/seedDemoData.js",
+    "seed:demo:empty": "node src/scripts/seedDemoData.js --empty-only",
     "seed:demo:reset": "node src/scripts/seedDemoData.js --reset",
     "test:api": "node src/scripts/smokeTestApi.js"
   },

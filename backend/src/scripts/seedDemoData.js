@@ -1,6 +1,22 @@
 import pool from '../db/pool.js';
 
 const shouldReset = process.argv.includes('--reset');
+const shouldSeedEmpty = process.argv.includes('--empty-only');
+const expiryOffsets = [7, 14, 21, 29, 30, 38, 45, 59, 60, 72, 84, 90];
+const activeStartDates = [
+    '2025-01-01',
+    '2025-04-01',
+    '2025-07-01',
+    '2025-10-01',
+    '2026-01-01',
+    '2026-03-01'
+];
+const longTermEndDates = [
+    '2027-03-31',
+    '2027-06-30',
+    '2027-09-30',
+    '2027-12-31'
+];
 
 const propertyFixtures = [
     {
@@ -191,9 +207,27 @@ const allocateBudget = (totalBudget, units, method) => {
     }
 
     return allocations.map((cents, index) => ({
-        percentageShare: rawWeights[index] * 100,
+        percentageShare: rawWeights[index],
         charge: cents / 100
     }));
+};
+
+const getApplicationRecordCount = async (client) => {
+    const result = await client.query(`
+        SELECT (
+            (SELECT COUNT(*) FROM properties)
+            + (SELECT COUNT(*) FROM units)
+            + (SELECT COUNT(*) FROM tenants)
+            + (SELECT COUNT(*) FROM leases)
+            + (SELECT COUNT(*) FROM service_charge_budgets)
+            + (SELECT COUNT(*) FROM service_charge_allocations)
+            + (SELECT COUNT(*) FROM service_charge_demands)
+            + (SELECT COUNT(*) FROM payments)
+            + (SELECT COUNT(*) FROM reminders)
+        )::int AS count
+    `);
+
+    return result.rows[0].count;
 };
 
 const resetApplicationData = async (client) => {
@@ -232,8 +266,12 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
 
     for(let unitIndex = 0; unitIndex < fixture.units.length; unitIndex += 1) {
         const unitFixture = fixture.units[unitIndex];
-        const expiryOffsets = propertyIndex === 0 ? [14, 30, 60, 90] : [];
-        const activeEndDate = expiryOffsets[unitIndex] ? dateAfterDays(expiryOffsets[unitIndex]) : '2027-12-31';
+        const globalLeaseIndex = created.leases;
+        const expiryOffset = expiryOffsets[globalLeaseIndex];
+        const activeStartDate = activeStartDates[globalLeaseIndex % activeStartDates.length];
+        const activeEndDate = expiryOffset
+            ? dateAfterDays(expiryOffset)
+            : longTermEndDates[globalLeaseIndex % longTermEndDates.length];
         const unit = await insertRow(
             client,
             `
@@ -287,7 +325,7 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
                 unit.id,
                 unit.unit_name,
                 unitFixture.bedrooms ? `${unitFixture.bedrooms}-bedroom unit` : 'Commercial unit',
-                unitFixture.expired ? '2024-01-01' : '2026-01-01',
+                unitFixture.expired ? '2025-01-01' : activeStartDate,
                 unitFixture.expired ? '2025-12-31' : activeEndDate,
                 Math.round(unitFixture.area * (unitFixture.bedrooms ? 18000 : 30000)),
                 unitFixture.expired ? 'expired' : 'active',
@@ -295,6 +333,9 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
             ]
         );
         created.leases += 1;
+        if(expiryOffset && !unitFixture.expired) {
+            created.expiringLeases += 1;
+        }
         unitRecords.push({ unit, tenant, lease, fixture: unitFixture });
     }
 
@@ -395,7 +436,7 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
         const paymentRatio = fixture.paymentRatios[unitIndex] ?? fixture.paymentRatios[0] ?? 0;
         const amountPaid = Math.round(allocationAmount.charge * paymentRatio * 100) / 100;
         const balance = Math.round((allocationAmount.charge - amountPaid) * 100) / 100;
-        const demandStatus = balance === 0 ? 'paid' : amountPaid > 0 ? 'part_paid' : 'issued';
+        const demandStatus = balance === 0 ? 'paid' : amountPaid > 0 ? 'part_paid' : 'overdue';
         const demand = await insertRow(
             client,
             `
@@ -472,7 +513,11 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
                     record.lease.id,
                     demand.id,
                     amountPaid,
-                    periodStart.startsWith('2025') ? '2025-02-10' : '2026-02-10',
+                    periodStart.startsWith('2025')
+                        ? '2025-02-10'
+                        : (propertyIndex + unitIndex) % 3 === 0
+                            ? dateAfterDays(-((propertyIndex + unitIndex) % 10))
+                            : '2026-02-10',
                     periodStart,
                     periodEnd,
                     `TNR-DEMO-${String(propertyIndex + 1).padStart(2, '0')}-${String(unitIndex + 1).padStart(2, '0')}`,
@@ -511,8 +556,41 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
         }
     }
 
+    const firstRecord = unitRecords[0];
+    const firstRecordRent = Math.round(
+        firstRecord.fixture.area * (firstRecord.fixture.bedrooms ? 18000 : 30000)
+    );
+
+    await client.query(
+        `
+            INSERT INTO payments (
+                lease_id,
+                payment_category,
+                amount_paid,
+                payment_date,
+                payment_for_period_start,
+                payment_for_period_end,
+                payment_method,
+                receipt_number,
+                status,
+                notes
+            )
+            VALUES ($1, 'rent', $2, $3, $4, $5, $6, $7, 'paid', $8)
+        `,
+        [
+            firstRecord.lease.id,
+            firstRecordRent,
+            propertyIndex < 3 ? `2025-${String(propertyIndex + 3).padStart(2, '0')}-15` : dateAfterDays(-(propertyIndex + 2)),
+            propertyIndex < 3 ? '2025-01-01' : '2026-01-01',
+            propertyIndex < 3 ? '2025-12-31' : '2026-12-31',
+            propertyIndex % 2 === 0 ? 'bank_transfer' : 'card',
+            `TNR-RENT-${String(propertyIndex + 1).padStart(2, '0')}`,
+            `Annual rent recorded for ${fixture.name}, ${firstRecord.unit.unit_name}.`
+        ]
+    );
+    created.payments += 1;
+
     if(!fixture.paymentRatios.some((ratio) => ratio < 1)) {
-        const firstRecord = unitRecords[0];
         await client.query(
             `
                 INSERT INTO reminders (
@@ -537,8 +615,8 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
 };
 
 const run = async () => {
-    if(!shouldReset) {
-        console.error('This script replaces application data. Run it explicitly with: npm run seed:demo:reset');
+    if(!shouldReset && !shouldSeedEmpty) {
+        console.error('Choose a safe mode: npm run seed:demo:empty or npm run seed:demo:reset');
         process.exitCode = 1;
         await pool.end();
         return;
@@ -554,7 +632,8 @@ const run = async () => {
         allocations: 0,
         demands: 0,
         payments: 0,
-        reminders: 0
+        reminders: 0,
+        expiringLeases: 0
     };
 
     try {
@@ -567,7 +646,17 @@ const run = async () => {
         );
         const adminId = adminResult.rows[0]?.id || null;
 
-        await resetApplicationData(client);
+        if(shouldSeedEmpty) {
+            const existingApplicationRecords = await getApplicationRecordCount(client);
+
+            if(existingApplicationRecords > 0) {
+                throw new Error(
+                    `Empty-only seed refused: found ${existingApplicationRecords} existing application records.`
+                );
+            }
+        } else {
+            await resetApplicationData(client);
+        }
 
         for(let index = 0; index < propertyFixtures.length; index += 1) {
             await seedProperty(client, propertyFixtures[index], index, adminId, created);
@@ -584,10 +673,28 @@ const run = async () => {
             throw new Error(`Expected 10 properties, created ${created.properties}`);
         }
 
+        const expiryResult = await client.query(`
+            SELECT COUNT(*)::int AS count
+            FROM leases
+            WHERE status = 'active'
+              AND end_date >= CURRENT_DATE
+              AND end_date <= CURRENT_DATE + INTERVAL '90 days'
+        `);
+        const visibleExpiringLeases = expiryResult.rows[0].count;
+
+        if(visibleExpiringLeases < 10) {
+            throw new Error(`Expected at least 10 visible expiring leases, created ${visibleExpiringLeases}`);
+        }
+
         await client.query('COMMIT');
 
-        console.log('Tenora application data reset and demo data seeded successfully.');
+        console.log(
+            shouldSeedEmpty
+                ? 'Tenora empty database seeded successfully.'
+                : 'Tenora application data reset and demo data seeded successfully.'
+        );
         console.log(`Users preserved: ${usersAfter}`);
+        console.log(`Leases expiring within 90 days: ${visibleExpiringLeases}`);
         console.table(created);
         console.log('Full-flow example: Ancestors Court / A1 / Test Tenant / 2026 Service Charge Budget');
     } catch (error) {

@@ -11,6 +11,8 @@ import {
   IconRulerMeasure,
   IconSearch,
   IconTrash,
+  IconChevronLeft,
+  IconChevronRight,
   IconX
 } from '@tabler/icons-react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
@@ -23,8 +25,16 @@ const emptyForm = {
   property_name: '',
   address: '',
   location: '',
-  property_description: ''
+  property_description: '',
+  total_lettable_space: ''
 };
+
+const emptyUnit = () => ({
+  unit_name: '',
+  floor_area_sqm: '',
+  bedrooms: '',
+  status: 'active'
+});
 
 const number = new Intl.NumberFormat('en-NG', { maximumFractionDigits: 1 });
 const safeNumber = (value) => {
@@ -59,6 +69,16 @@ const Properties = () => {
   const [editingProperty, setEditingProperty] = useState(null);
   const [deletingProperty, setDeletingProperty] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [wizardStep, setWizardStep] = useState(1);
+  const [setupUnits, setSetupUnits] = useState([]);
+
+  const configuredArea = setupUnits.reduce(
+    (total, unit) => total + safeNumber(unit.floor_area_sqm),
+    0
+  );
+  const totalLettableSpace = safeNumber(form.total_lettable_space);
+  const unconfiguredArea = Math.max(totalLettableSpace - configuredArea, 0);
+  const configuredAreaExceedsTotal = configuredArea - totalLettableSpace > 0.0001;
 
   const query = useMemo(() => ({
     page,
@@ -141,6 +161,8 @@ const Properties = () => {
   const openCreateModal = () => {
     setEditingProperty(null);
     setForm(emptyForm);
+    setWizardStep(1);
+    setSetupUnits([]);
     setError('');
     setSuccess('');
     setIsModalOpen(true);
@@ -167,8 +189,11 @@ const Properties = () => {
       property_name: property.property_name || '',
       address: property.address || '',
       location: property.location || '',
-      property_description: property.property_description || ''
+      property_description: property.property_description || '',
+      total_lettable_space: property.total_lettable_space ?? ''
     });
+    setWizardStep(1);
+    setSetupUnits([]);
     setError('');
     setSuccess('');
     setIsModalOpen(true);
@@ -178,6 +203,61 @@ const Properties = () => {
     setIsModalOpen(false);
     setEditingProperty(null);
     setForm(emptyForm);
+    setWizardStep(1);
+    setSetupUnits([]);
+  };
+
+  const updateSetupUnit = (index, field, value) => {
+    setSetupUnits((current) => current.map((unit, unitIndex) => (
+      unitIndex === index ? { ...unit, [field]: value } : unit
+    )));
+  };
+
+  const validatePropertyStep = () => {
+    if (!form.property_name.trim() || !form.address.trim()) {
+      setError('Property name and address are required');
+      return false;
+    }
+
+    if (form.total_lettable_space !== '' && totalLettableSpace < 0) {
+      setError('Total lettable space must be zero or greater');
+      return false;
+    }
+
+    setError('');
+    return true;
+  };
+
+  const validateUnitsStep = () => {
+    const invalidUnit = setupUnits.find((unit) => (
+      !unit.unit_name.trim()
+      || (unit.floor_area_sqm !== '' && safeNumber(unit.floor_area_sqm) < 0)
+      || (unit.bedrooms !== '' && (!Number.isInteger(Number(unit.bedrooms)) || Number(unit.bedrooms) < 0))
+    ));
+
+    if (invalidUnit) {
+      setError('Every added unit needs a name, a valid non-negative floor area, and a valid bedroom count');
+      return false;
+    }
+
+    if (configuredArea > 0 && totalLettableSpace <= 0) {
+      setError('Enter a positive total lettable space before saving units with floor area');
+      return false;
+    }
+
+    if (configuredAreaExceedsTotal) {
+      setError('Configured unit area cannot exceed total lettable space');
+      return false;
+    }
+
+    setError('');
+    return true;
+  };
+
+  const goToNextStep = () => {
+    if (wizardStep === 1 && !validatePropertyStep()) return;
+    if (wizardStep === 2 && !validateUnitsStep()) return;
+    setWizardStep((current) => Math.min(3, current + 1));
   };
 
   const handleSubmit = async (event) => {
@@ -188,10 +268,25 @@ const Properties = () => {
 
     try {
       if (editingProperty) {
-        await apiClient.put(`/properties/${editingProperty.id}`, form);
+        await apiClient.put(`/properties/${editingProperty.id}`, {
+          ...form,
+          total_lettable_space: form.total_lettable_space === '' ? null : Number(form.total_lettable_space)
+        });
         setSuccess('Property updated successfully');
       } else {
-        await apiClient.post('/properties', form);
+        if (!validatePropertyStep() || !validateUnitsStep()) {
+          setIsSaving(false);
+          return;
+        }
+        await apiClient.post('/properties', {
+          ...form,
+          total_lettable_space: form.total_lettable_space === '' ? null : Number(form.total_lettable_space),
+          units: setupUnits.map((unit) => ({
+            ...unit,
+            floor_area_sqm: unit.floor_area_sqm === '' ? null : Number(unit.floor_area_sqm),
+            bedrooms: unit.bedrooms === '' ? null : Number(unit.bedrooms)
+          }))
+        });
         setSuccess('Property created successfully');
       }
 
@@ -383,7 +478,7 @@ const Properties = () => {
                   </p>
 
                   <div className="tenora-property-metrics">
-                    <div><small>Units</small><strong>{number.format(units)}</strong></div>
+                    <div><small>Units</small><strong>{number.format(property.configured_unit_count ?? units)}</strong></div>
                     <div><small>Lettable space</small><strong>{space ? `${number.format(space)} sqm` : 'Not set'}</strong></div>
                   </div>
 
@@ -453,18 +548,28 @@ const Properties = () => {
 
       {isModalOpen && (
         <div className="tenora-property-modal-backdrop">
-          <form className="tenora-property-modal" onSubmit={handleSubmit}>
+          <form className={`tenora-property-modal ${editingProperty ? '' : 'tenora-property-wizard'}`} onSubmit={handleSubmit}>
             <header>
               <div>
-                <span>{editingProperty ? 'Property details' : 'New portfolio asset'}</span>
-                <h3>{editingProperty ? 'Edit property' : 'Add property'}</h3>
-                <p>Core details are used across units, tenancies, and service charges.</p>
+                <span>{editingProperty ? 'Property details' : `Property onboarding · Step ${wizardStep} of 3`}</span>
+                <h3>{editingProperty ? 'Edit property' : ['Property details', 'Units setup', 'Review & save'][wizardStep - 1]}</h3>
+                <p>{editingProperty ? 'Update the management-entered property details.' : 'Set up the property and its physical lettable-space register.'}</p>
               </div>
               <button className="btn btn-light btn-icon" type="button" onClick={closeModal} aria-label="Close property form"><IconX size={18} /></button>
             </header>
 
+            {!editingProperty && (
+              <div className="tenora-wizard-steps" aria-label="Property setup progress">
+                {['Property Details', 'Units Setup', 'Review & Save'].map((label, index) => (
+                  <span className={wizardStep >= index + 1 ? 'is-active' : ''} key={label}>
+                    <i>{index + 1}</i>{label}
+                  </span>
+                ))}
+              </div>
+            )}
+
             <div className="tenora-property-modal-body">
-              <div className="tenora-form-section">
+              {(editingProperty || wizardStep === 1) && <><div className="tenora-form-section">
                 <div><strong>Identity</strong><span>How this property appears across Tenora.</span></div>
                 <div className="row g-3">
                   <div className="col-12">
@@ -495,15 +600,64 @@ const Properties = () => {
 
               <div className="tenora-property-form-note">
                 <IconRulerMeasure size={18} />
-                <span>Unit count and total floor area are calculated automatically from the Units page.</span>
+                <span>Total lettable space is the management-approved denominator for service-charge accounting.</span>
               </div>
+              <div className="tenora-form-section">
+                <div><strong>Area control</strong><span>This can exceed the units configured today, but configured units may never exceed it.</span></div>
+                <div>
+                  <label className="form-label" htmlFor="property-total-space">Total lettable space (sqm)</label>
+                  <input id="property-total-space" className="form-control" name="total_lettable_space" type="number" min="0" step="0.01" value={form.total_lettable_space} onChange={handleFormChange} placeholder="1000" />
+                  <div className="form-text">A positive value is required before service charges can be calculated.</div>
+                </div>
+              </div></>}
+
+              {!editingProperty && wizardStep === 2 && (
+                <>
+                  <div className="tenora-wizard-area-summary">
+                    <div><small>Total lettable</small><strong>{number.format(totalLettableSpace)} sqm</strong></div>
+                    <div><small>Configured units</small><strong>{number.format(configuredArea)} sqm</strong></div>
+                    <div className={configuredAreaExceedsTotal ? 'is-error' : ''}><small>Remaining</small><strong>{number.format(totalLettableSpace - configuredArea)} sqm</strong></div>
+                  </div>
+                  <div className="tenora-wizard-unit-list">
+                    {setupUnits.map((unit, index) => (
+                      <article key={`setup-unit-${index}`}>
+                        <header><strong>Unit {index + 1}</strong><button type="button" onClick={() => setSetupUnits((current) => current.filter((_, unitIndex) => unitIndex !== index))}>Remove</button></header>
+                        <div className="row g-3">
+                          <div className="col-12 col-md-4"><label className="form-label">Unit name</label><input className="form-control" value={unit.unit_name} onChange={(event) => updateSetupUnit(index, 'unit_name', event.target.value)} placeholder="A1" /></div>
+                          <div className="col-12 col-md-3"><label className="form-label">Floor area (sqm)</label><input className="form-control" type="number" min="0" step="0.01" value={unit.floor_area_sqm} onChange={(event) => updateSetupUnit(index, 'floor_area_sqm', event.target.value)} placeholder="200" /></div>
+                          <div className="col-6 col-md-2"><label className="form-label">Bedrooms</label><input className="form-control" type="number" min="0" step="1" value={unit.bedrooms} onChange={(event) => updateSetupUnit(index, 'bedrooms', event.target.value)} /></div>
+                          <div className="col-6 col-md-3"><label className="form-label">Status</label><select className="form-select" value={unit.status} onChange={(event) => updateSetupUnit(index, 'status', event.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option></select></div>
+                        </div>
+                      </article>
+                    ))}
+                    {setupUnits.length === 0 && <div className="tenora-wizard-empty">Units are optional during onboarding. They can also be added later from the Units page.</div>}
+                    <button className="btn btn-light border" type="button" onClick={() => setSetupUnits((current) => [...current, emptyUnit()])}><IconPlus size={16} /> Add unit</button>
+                  </div>
+                  {configuredAreaExceedsTotal && <div className="alert alert-danger mb-0">Configured unit area exceeds total lettable space by {number.format(configuredArea - totalLettableSpace)} sqm.</div>}
+                  {!configuredAreaExceedsTotal && configuredArea < totalLettableSpace && <div className="alert alert-warning mb-0">{number.format(unconfiguredArea)} sqm will remain owner/unallocated until more physical units are configured.</div>}
+                </>
+              )}
+
+              {!editingProperty && wizardStep === 3 && (
+                <div className="tenora-wizard-review">
+                  <section><small>Property</small><h4>{form.property_name}</h4><p>{form.address}{form.location ? ` · ${form.location}` : ''}</p><span>{form.property_description || 'No description provided'}</span></section>
+                  <div className="tenora-wizard-area-summary">
+                    <div><small>Total lettable</small><strong>{number.format(totalLettableSpace)} sqm</strong></div>
+                    <div><small>Physical units</small><strong>{setupUnits.length}</strong></div>
+                    <div><small>Configured area</small><strong>{number.format(configuredArea)} sqm</strong></div>
+                    <div><small>Unconfigured area</small><strong>{number.format(unconfiguredArea)} sqm</strong></div>
+                  </div>
+                  {setupUnits.length > 0 && <div className="tenora-wizard-review-units">{setupUnits.map((unit) => <div key={unit.unit_name}><strong>{unit.unit_name}</strong><span>{number.format(safeNumber(unit.floor_area_sqm))} sqm · {unit.status}</span></div>)}</div>}
+                  {totalLettableSpace <= 0 && <div className="alert alert-warning mb-0">This property can be saved, but service-charge calculation will remain blocked until a positive total lettable space is entered.</div>}
+                  {unconfiguredArea > 0 && <div className="alert alert-warning mb-0">Unconfigured space remains an owner/unallocated service-charge share.</div>}
+                </div>
+              )}
             </div>
 
             <footer>
-              <button className="btn btn-light border" type="button" onClick={closeModal}>Cancel</button>
-              <button className="btn btn-primary tenora-primary-btn" type="submit" disabled={isSaving}>
-                {isSaving ? 'Saving...' : editingProperty ? 'Save changes' : 'Create property'}
-              </button>
+              <button className="btn btn-light border" type="button" onClick={wizardStep > 1 && !editingProperty ? () => setWizardStep((current) => current - 1) : closeModal}>{wizardStep > 1 && !editingProperty ? <><IconChevronLeft size={16} /> Back</> : 'Cancel'}</button>
+              {(editingProperty || wizardStep === 3) && <button className="btn btn-primary tenora-primary-btn" type="submit" disabled={isSaving || configuredAreaExceedsTotal}>{isSaving ? 'Saving...' : editingProperty ? 'Save changes' : 'Create property & units'}</button>}
+              {!editingProperty && wizardStep < 3 && <button className="btn btn-primary tenora-primary-btn" type="button" onClick={goToNextStep}>Continue <IconChevronRight size={16} /></button>}
             </footer>
           </form>
         </div>

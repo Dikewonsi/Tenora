@@ -22,6 +22,7 @@ apiClient.interceptors.response.use(
   (error) => {
     const isLoginRequest = error.config?.url?.includes('/auth/login');
     const errorCode = error.response?.data?.code;
+    const sessionBlockedCodes = ['ACCOUNT_DISABLED', 'ACCOUNT_NOT_FOUND', 'TOKEN_REVOKED', 'TOKEN_INVALID'];
 
     if (errorCode === 'ACCESS_EXPIRED' || errorCode === 'ACCESS_CONFIG_INVALID') {
       localStorage.removeItem('tenora_token');
@@ -32,9 +33,16 @@ apiClient.interceptors.response.use(
           message: error.response?.data?.message
         }
       }));
-    } else if (error.response?.status === 401 && !isLoginRequest) {
+    } else if (
+      !isLoginRequest
+      && (error.response?.status === 401 || sessionBlockedCodes.includes(errorCode))
+    ) {
       localStorage.removeItem('tenora_token');
       localStorage.removeItem('tenora_user');
+      localStorage.setItem(
+        'tenora_auth_message',
+        error.response?.data?.message || 'Your session is no longer valid. Please sign in again.'
+      );
 
       window.location.href = '/login';
     }

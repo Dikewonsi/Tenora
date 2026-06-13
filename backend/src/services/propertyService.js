@@ -1,5 +1,11 @@
 import pool from '../db/pool.js';
 import { getPagination } from '../utils/pagination.js';
+import {
+    assertConfiguredAreaWithinTotal,
+    isMissing,
+    normalizeOptionalArea,
+    normalizeUnitData
+} from './propertyAreaService.js';
 
 const propertyColumns = `
     properties.id,
@@ -14,11 +20,24 @@ const propertyColumns = `
           AND units.status = 'active'
     ), 0)::int AS total_units,
     COALESCE((
+        SELECT COUNT(*)
+        FROM units
+        WHERE units.property_id = properties.id
+    ), 0)::int AS configured_unit_count,
+    properties.total_lettable_space,
+    COALESCE((
         SELECT SUM(units.floor_area_sqm)
         FROM units
         WHERE units.property_id = properties.id
-          AND units.status = 'active'
-    ), 0) AS total_lettable_space,
+    ), 0) AS configured_unit_area_sqm,
+    GREATEST(
+        COALESCE(properties.total_lettable_space, 0) - COALESCE((
+            SELECT SUM(units.floor_area_sqm)
+            FROM units
+            WHERE units.property_id = properties.id
+        ), 0),
+        0
+    ) AS unconfigured_area_sqm,
     properties.created_at AS "createdAt",
     properties.updated_at AS "updatedAt"
 `;
@@ -98,7 +117,9 @@ const createProperty = async (propertyData) => {
         name,
         address,
         location,
-        property_description
+        property_description,
+        total_lettable_space,
+        units = []
     } = propertyData;
 
     if(!address) {
@@ -107,25 +128,84 @@ const createProperty = async (propertyData) => {
         throw error;
     }
 
-    const result = await pool.query(`
-        INSERT INTO properties (
-            property_name,
-            address,
-            location,
-            property_description
-        )
-        VALUES ($1, $2, $3, $4)
-        RETURNING id
-        `,
-        [
-            property_name || name,
-            address,
-            location,
-            property_description
-        ]
-    );
+    if(!Array.isArray(units)) {
+        const error = new Error('Units must be provided as an array');
+        error.status = 400;
+        throw error;
+    }
 
-    return getPropertyById(result.rows[0].id);
+    const normalizedTotal = normalizeOptionalArea(total_lettable_space, 'Total lettable space');
+    const normalizedUnits = units.map((unit) => normalizeUnitData(unit, { requireProperty: false }));
+    const configuredArea = normalizedUnits.reduce(
+        (total, unit) => total + Number(unit.floor_area_sqm || 0),
+        0
+    );
+    assertConfiguredAreaWithinTotal({
+        configuredArea,
+        totalLettableSpace: normalizedTotal
+    });
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN');
+        const result = await client.query(
+            `
+                INSERT INTO properties (
+                    property_name,
+                    address,
+                    location,
+                    property_description,
+                    total_lettable_space
+                )
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING id
+            `,
+            [
+                property_name || name,
+                address,
+                location,
+                property_description,
+                normalizedTotal
+            ]
+        );
+        const propertyId = result.rows[0].id;
+
+        for(const unit of normalizedUnits) {
+            await client.query(
+                `
+                    INSERT INTO units (
+                        property_id,
+                        unit_name,
+                        floor_area_sqm,
+                        bedrooms,
+                        status
+                    )
+                    VALUES ($1, $2, $3, $4, $5)
+                `,
+                [
+                    propertyId,
+                    unit.unit_name,
+                    unit.floor_area_sqm,
+                    unit.bedrooms,
+                    unit.status
+                ]
+            );
+        }
+
+        await client.query('COMMIT');
+        return getPropertyById(propertyId);
+    } catch (error) {
+        await client.query('ROLLBACK');
+
+        if(error.code === '23505') {
+            error.message = 'Unit names must be unique within the property';
+            error.status = 400;
+        }
+
+        throw error;
+    } finally {
+        client.release();
+    }
 }
 
 const updateProperty = async (id, propertyData) => {
@@ -138,29 +218,75 @@ const updateProperty = async (id, propertyData) => {
         location = existingProperty.location,
         property_description = existingProperty.property_description
     } = propertyData;
+    const nextTotal = Object.hasOwn(propertyData, 'total_lettable_space')
+        ? normalizeOptionalArea(propertyData.total_lettable_space, 'Total lettable space')
+        : (isMissing(existingProperty.total_lettable_space)
+            ? null
+            : Number(existingProperty.total_lettable_space));
+    const client = await pool.connect();
 
-    const result = await pool.query(
-        `
-            UPDATE properties
-            SET
-                property_name = $1,
-                address = $2,
-                location = $3,
-                property_description = $4,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = $5
-            RETURNING id
-        `,
-        [
-            property_name || name,
-            address,
-            location,
-            property_description,
-            id
-        ]
-    );
+    try {
+        await client.query('BEGIN');
+        const lockResult = await client.query(
+            'SELECT id FROM properties WHERE id = $1 FOR UPDATE',
+            [id]
+        );
 
-    return getPropertyById(result.rows[0].id);
+        if(!lockResult.rows[0]) {
+            const error = new Error('Property not found');
+            error.status = 404;
+            throw error;
+        }
+
+        const areaResult = await client.query(
+            `
+                SELECT COALESCE(SUM(floor_area_sqm), 0) AS configured_unit_area_sqm
+                FROM units
+                WHERE property_id = $1
+            `,
+            [id]
+        );
+        assertConfiguredAreaWithinTotal({
+            configuredArea: Number(areaResult.rows[0].configured_unit_area_sqm || 0),
+            totalLettableSpace: nextTotal
+        });
+        const result = await client.query(
+            `
+                UPDATE properties
+                SET
+                    property_name = $1,
+                    address = $2,
+                    location = $3,
+                    property_description = $4,
+                    total_lettable_space = $5,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = $6
+                RETURNING id
+            `,
+            [
+                property_name || name,
+                address,
+                location,
+                property_description,
+                nextTotal,
+                id
+            ]
+        );
+
+        if(!result.rows[0]) {
+            const error = new Error('Property not found');
+            error.status = 404;
+            throw error;
+        }
+
+        await client.query('COMMIT');
+        return getPropertyById(result.rows[0].id);
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
 };
 
 const deleteProperty = async (id) => {
@@ -177,10 +303,10 @@ const deleteProperty = async (id) => {
                     address,
                     location,
                     property_description,
-                total_units,
-                total_lettable_space,
-                created_at AS "createdAt",
-                updated_at AS "updatedAt"
+                    total_units,
+                    total_lettable_space,
+                    created_at AS "createdAt",
+                    updated_at AS "updatedAt"
             `,
             [id]
         );

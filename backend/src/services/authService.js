@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import pool from '../db/pool.js';
 
 const loginUser = async (email, password) => {
-   
+    const normalizedEmail = String(email || '').trim().toLowerCase();
     const result = await pool.query(
         `
             SELECT 
@@ -13,11 +13,12 @@ const loginUser = async (email, password) => {
                 email,
                 password_hash AS "passwordHash",
                 role,
-                is_active AS "isActive"
+                is_active AS "isActive",
+                token_version AS "tokenVersion"
             FROM users
-            WHERE email = $1
+            WHERE LOWER(email) = $1
         `,
-        [email]
+        [normalizedEmail]
     );
 
     const user = result.rows[0];
@@ -46,7 +47,8 @@ const loginUser = async (email, password) => {
         {
             id: user.id,
             email: user.email,
-            role: user.role
+            role: user.role,
+            tokenVersion: user.tokenVersion
         },
         process.env.JWT_SECRET,
         {
@@ -54,12 +56,25 @@ const loginUser = async (email, password) => {
         }
     );
 
+    const loginResult = await pool.query(
+        `
+            UPDATE users
+            SET last_login_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+              AND is_active = TRUE
+            RETURNING last_login_at AS "lastLoginAt"
+        `,
+        [user.id]
+    );
+
     return {
         user: {
             id: user.id,
             fullName: user.fullName,
             email: user.email,
-            role: user.role
+            role: user.role,
+            isActive: true,
+            lastLoginAt: loginResult.rows[0]?.lastLoginAt || null
         },
         token
     };
@@ -74,6 +89,8 @@ const getCurrentUser = async (userId) => {
                 email,
                 role,
                 is_active AS "isActive",
+                last_login_at AS "lastLoginAt",
+                password_changed_at AS "passwordChangedAt",
                 created_at AS "createdAt",
                 updated_at AS "updatedAt"
             FROM users

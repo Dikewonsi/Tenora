@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   IconBuildingCommunity,
   IconCreditCard,
@@ -19,6 +20,7 @@ const getInitials = (user) => {
 
 const Settings = () => {
   const { user, logout, refreshUser } = useAuth();
+  const navigate = useNavigate();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
   const [message, setMessage] = useState('');
@@ -71,8 +73,13 @@ const Settings = () => {
     {
       title: 'User and security',
       description: 'Password management, additional administrators, and access controls.',
-      detail: 'Your current account is protected and active.',
-      icon: IconShieldLock
+      detail: user?.role === 'super_admin'
+        ? 'Create users, assign roles, reset passwords, and control access.'
+        : 'Your current account is protected and active.',
+      icon: IconShieldLock,
+      action: user?.role === 'super_admin'
+        ? () => navigate('/settings/users')
+        : null
     }
   ];
 
@@ -131,6 +138,7 @@ const Settings = () => {
                       <h3 className="h4 fw-bold mb-2">{item.title}</h3>
                       <p className="text-secondary mb-3">{item.description}</p>
                       <div className="small p-3 rounded-3" style={{ background: '#f7faf8', color: '#52615b' }}>{item.detail}</div>
+                      {item.action && <button className="btn btn-light border mt-3" type="button" onClick={item.action}>Open Users & Access</button>}
                     </div>
                   </article>
                 </div>

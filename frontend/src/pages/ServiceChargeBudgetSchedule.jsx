@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { IconArrowLeft, IconCalculator, IconChecks, IconDeviceFloppy, IconEye, IconRefresh } from '@tabler/icons-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import apiClient from '../api/apiClient';
@@ -22,17 +22,35 @@ const ServiceChargeBudgetSchedule = () => {
   const [isWorking, setIsWorking] = useState(false);
   const [confirmIssue, setConfirmIssue] = useState(false);
   const [feedbackModal, setFeedbackModal] = useState(null);
+  const automaticCalculationBudgetId = useRef(null);
 
   const budget = schedule?.budget || {};
   const allocations = schedule?.allocations || [];
   const validation = schedule?.validation || {};
+  const isBillingEligible = (allocation) => (
+    allocation.billing_eligible === null || allocation.billing_eligible === undefined
+      ? Boolean(allocation.lease_id && allocation.tenant_id)
+      : Boolean(allocation.billing_eligible)
+  );
+  const billableAllocations = allocations.filter(isBillingEligible);
 
   const loadSchedule = async () => {
     setIsLoading(true);
 
     try {
       const response = await apiClient.get(`/service-charge-budgets/${budgetId}/schedule`);
-      const nextSchedule = response.data.data.schedule;
+      let nextSchedule = response.data.data.schedule;
+
+      if (
+        nextSchedule.budget?.status === 'draft'
+        && (nextSchedule.allocations || []).length === 0
+        && automaticCalculationBudgetId.current !== budgetId
+      ) {
+        automaticCalculationBudgetId.current = budgetId;
+        const calculationResponse = await apiClient.post(`/service-charge-budgets/${budgetId}/calculate`);
+        nextSchedule = calculationResponse.data.data.schedule;
+      }
+
       setSchedule(nextSchedule);
       setDraftRows(Object.fromEntries((nextSchedule.allocations || []).map((allocation) => [
         allocation.id,
@@ -50,21 +68,6 @@ const ServiceChargeBudgetSchedule = () => {
     loadSchedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [budgetId]);
-
-  const calculate = async () => {
-    setIsWorking(true);
-
-    try {
-      const response = await apiClient.post(`/service-charge-budgets/${budgetId}/calculate`);
-      setSchedule(response.data.data.schedule);
-      setFeedbackModal({ variant: 'success', title: 'Schedule calculated', message: 'All active property units have been allocated.' });
-      await loadSchedule();
-    } catch (error) {
-      setFeedbackModal({ variant: 'danger', title: 'Schedule could not be calculated', message: error.response?.data?.message || error.message });
-    } finally {
-      setIsWorking(false);
-    }
-  };
 
   const saveAllocation = async (allocationId) => {
     setIsWorking(true);
@@ -101,21 +104,22 @@ const ServiceChargeBudgetSchedule = () => {
     }
   };
 
-  const currentFinalTotal = allocations.reduce((total, allocation) => {
+  const currentFinalTotal = billableAllocations.reduce((total, allocation) => {
     const draft = draftRows[allocation.id]?.final_charge;
     return total + Number(draft ?? allocation.final_charge ?? 0);
   }, 0);
-  const difference = currentFinalTotal - Number(budget.total_budget || 0);
+  const ownerLiabilityTotal = Math.max(Number(budget.total_budget || 0) - currentFinalTotal, 0);
   const changedAllocationIds = allocations
     .filter((allocation) => (
-      Number(draftRows[allocation.id]?.final_charge ?? 0) !== Number(allocation.final_charge ?? 0)
+      isBillingEligible(allocation)
+      && (Number(draftRows[allocation.id]?.final_charge ?? 0) !== Number(allocation.final_charge ?? 0)
       || String(draftRows[allocation.id]?.adjustment_note ?? '') !== String(allocation.adjustment_note ?? '')
+      )
     ))
     .map((allocation) => allocation.id);
-  const isReadyToIssue = allocations.length > 0
+  const isReadyToIssue = billableAllocations.length > 0
     && changedAllocationIds.length === 0
-    && validation.total_matches_budget
-    && (validation.vacant_units || []).length === 0;
+    && validation.total_matches_budget;
 
   const saveAll = async () => {
     if (changedAllocationIds.length === 0) return;
@@ -187,7 +191,6 @@ const ServiceChargeBudgetSchedule = () => {
           </div>
           <div className="tenora-schedule-actions">
             <button className="btn btn-light d-flex align-items-center justify-content-center gap-2" type="button" onClick={loadSchedule}><IconRefresh size={18} /> Refresh</button>
-            <button className="btn btn-primary tenora-primary-btn" type="button" onClick={calculate} disabled={isWorking || budget.status === 'issued'}><IconCalculator size={18} /> Calculate</button>
             {changedAllocationIds.length > 0 && <button className="btn btn-warning d-flex align-items-center justify-content-center gap-2" type="button" onClick={saveAll} disabled={isWorking || budget.status === 'issued'}><IconDeviceFloppy size={18} /> Save All ({changedAllocationIds.length})</button>}
             <button className="btn btn-success d-flex align-items-center justify-content-center gap-2" type="button" onClick={() => setConfirmIssue(true)} disabled={isWorking || !isReadyToIssue || budget.status === 'issued'}><IconChecks size={18} /> Approve and Issue</button>
           </div>
@@ -197,17 +200,22 @@ const ServiceChargeBudgetSchedule = () => {
       <section className="tenora-schedule-summary">
         {[
           ['Total budget', money.format(Number(budget.total_budget || 0))],
-          ['Active units', budget.total_units || allocations.length],
-          ['Total unit area', `${Number(budget.total_area_sqm || 0).toLocaleString()} sqm`],
-          ['Final schedule', money.format(currentFinalTotal)]
+          ['Total lettable space', `${Number(budget.denominator_area_sqm ?? budget.total_area_sqm ?? budget.property_total_lettable_space ?? 0).toLocaleString()} sqm`],
+          ['Tenant demand total', money.format(currentFinalTotal)],
+          ['Owner / unallocated', money.format(ownerLiabilityTotal)],
+          ['Occupied billed area', `${Number(budget.occupied_billed_area_sqm || 0).toLocaleString()} sqm`],
+          ['Vacant area', `${Number(budget.vacant_area_sqm || 0).toLocaleString()} sqm`],
+          ['Inactive area', `${Number(budget.inactive_area_sqm || 0).toLocaleString()} sqm`],
+          ['Unconfigured area', `${Number(budget.unconfigured_area_sqm || 0).toLocaleString()} sqm`]
         ].map(([label, value]) => <article key={label}><small>{label}</small><strong>{isLoading ? '...' : value}</strong></article>)}
       </section>
 
       <section className="tenora-schedule-validation">
-        {!validation.total_matches_budget && allocations.length > 0 && <div className="is-warning"><strong>Budget mismatch</strong><span>Final charges are {money.format(Math.abs(difference))} {difference > 0 ? 'over' : 'under'} the budget.</span></div>}
-        {(validation.vacant_units || []).length > 0 && <div className="is-warning"><strong>Vacant units</strong><span>Add active occupants before issue: {validation.vacant_units.join(', ')}.</span></div>}
+        {!validation.total_matches_budget && allocations.length > 0 && <div className="is-warning"><strong>Budget mismatch</strong><span>Tenant demand and owner liability totals do not reconcile to the budget.</span></div>}
+        {(validation.owner_liability_units || []).length > 0 && <div className="is-info"><strong>Owner liability units</strong><span>No tenant demand will be created for: {validation.owner_liability_units.join(', ')}.</span></div>}
         {changedAllocationIds.length > 0 && <div className="is-info"><strong>Unsaved changes</strong><span>{changedAllocationIds.length} allocation change{changedAllocationIds.length === 1 ? '' : 's'} must be saved.</span></div>}
-        {isReadyToIssue && budget.status !== 'issued' && <div className="is-success"><strong>Ready to issue</strong><span>The schedule matches the budget and every allocation has an occupant.</span></div>}
+        {validation.total_matches_budget && allocations.length > 0 && <div className="is-success"><strong>Reconciled</strong><span>Tenant demands {money.format(currentFinalTotal)} + owner/unallocated {money.format(ownerLiabilityTotal)} = {money.format(Number(budget.total_budget || 0))}.</span></div>}
+        {isReadyToIssue && budget.status !== 'issued' && <div className="is-success"><strong>Ready to issue</strong><span>Demands will be created only for occupied active units.</span></div>}
       </section>
 
       <section className="tenora-property-workspace">
@@ -216,29 +224,29 @@ const ServiceChargeBudgetSchedule = () => {
           <thead><tr><th>Unit</th><th>Tenant/Occupant</th><th>Area</th><th>Share</th><th>Calculated</th><th style={{ minWidth: 150 }}>Final Charge</th><th style={{ minWidth: 220 }}>Adjustment Note</th><th>Demand/Payment</th><th className="text-end">Action</th></tr></thead>
           <tbody>
             {isLoading && <tr><td colSpan="9" className="text-center py-5 text-secondary">Loading schedule...</td></tr>}
-            {!isLoading && allocations.length === 0 && <tr><td colSpan="9" className="text-center py-5 text-secondary">No schedule yet. Click Calculate to allocate the budget to property units.</td></tr>}
+            {!isLoading && allocations.length === 0 && <tr><td colSpan="9" className="text-center py-5 text-secondary">No schedule is available. Calculation runs automatically when the property setup is ready.</td></tr>}
             {!isLoading && allocations.map((allocation) => (
               <tr key={allocation.id} className={changedAllocationIds.includes(allocation.id) ? 'tenora-changed-row' : ''}>
                 <td><strong>{allocation.unit_name_snapshot}</strong></td>
-                <td>{allocation.tenant_name_snapshot || <span className="text-warning">Vacant</span>}<div className="small text-secondary">{allocation.tenant_email_snapshot || allocation.tenant_phone_snapshot || ''}</div></td>
+                <td>{allocation.tenant_name_snapshot || <span className="text-warning">{allocation.unit_status_snapshot === 'inactive' ? 'Inactive' : 'Vacant'}</span>}<div className="small text-secondary">{allocation.tenant_email_snapshot || allocation.tenant_phone_snapshot || ''}</div></td>
                 <td>{allocation.floor_area_sqm_snapshot === null ? '-' : `${Number(allocation.floor_area_sqm_snapshot).toLocaleString()} sqm`}</td>
                 <td>{formatPercentage(allocation.percentage_share)}</td>
                 <td>{money.format(Number(allocation.calculated_charge || 0))}</td>
-                <td><input className="form-control form-control-sm" type="number" min="0" step="0.01" value={draftRows[allocation.id]?.final_charge ?? allocation.final_charge} disabled={budget.status === 'issued'} onChange={(event) => setDraftRows((current) => ({ ...current, [allocation.id]: { ...current[allocation.id], final_charge: event.target.value } }))} /></td>
-                <td><input className="form-control form-control-sm" value={draftRows[allocation.id]?.adjustment_note ?? ''} disabled={budget.status === 'issued'} onChange={(event) => setDraftRows((current) => ({ ...current, [allocation.id]: { ...current[allocation.id], adjustment_note: event.target.value } }))} placeholder="Reason for adjustment" /></td>
-                <td>{allocation.demand_id ? <div><StatusBadge status={allocation.demand_status} /><div className="small text-secondary mt-1">Balance {money.format(Number(allocation.balance || 0))}</div></div> : <span className="text-secondary">Not issued</span>}</td>
+                <td><input className="form-control form-control-sm" type="number" min="0" step="0.01" value={draftRows[allocation.id]?.final_charge ?? allocation.final_charge} disabled={budget.status === 'issued' || !isBillingEligible(allocation)} onChange={(event) => setDraftRows((current) => ({ ...current, [allocation.id]: { ...current[allocation.id], final_charge: event.target.value } }))} /></td>
+                <td><input className="form-control form-control-sm" value={draftRows[allocation.id]?.adjustment_note ?? ''} disabled={budget.status === 'issued' || !isBillingEligible(allocation)} onChange={(event) => setDraftRows((current) => ({ ...current, [allocation.id]: { ...current[allocation.id], adjustment_note: event.target.value } }))} placeholder={isBillingEligible(allocation) ? 'Reason for adjustment' : 'Owner / unallocated liability'} /></td>
+                <td>{allocation.demand_id ? <div><StatusBadge status={allocation.demand_status} /><div className="small text-secondary mt-1">Balance {money.format(Number(allocation.balance || 0))}</div></div> : <span className="text-secondary">{isBillingEligible(allocation) ? 'Not issued' : 'No tenant demand'}</span>}</td>
                 <td className="text-end">{allocation.demand_id ? <button className="btn btn-sm btn-light" type="button" onClick={() => navigate(`/service-charges/${allocation.demand_id}/document`)} aria-label="Preview demand notice" title="Preview demand"><IconEye size={16} /></button> : <button className="btn btn-sm btn-light" type="button" disabled={isWorking || budget.status === 'issued' || !changedAllocationIds.includes(allocation.id)} onClick={() => saveAllocation(allocation.id)}>Save</button>}</td>
               </tr>
             ))}
           </tbody>
-          {allocations.length > 0 && <tfoot><tr><th colSpan="4">Totals</th><th>{money.format(allocations.reduce((total, allocation) => total + Number(allocation.calculated_charge || 0), 0))}</th><th>{money.format(currentFinalTotal)}</th><th colSpan="3" /></tr></tfoot>}
+          {allocations.length > 0 && <tfoot><tr><th colSpan="4">Tenant totals</th><th>{money.format(billableAllocations.reduce((total, allocation) => total + Number(allocation.calculated_charge || 0), 0))}</th><th>{money.format(currentFinalTotal)}</th><th colSpan="3" /></tr></tfoot>}
         </table></div>
         <div className="tenora-mobile-list">
           {allocations.map((allocation) => (
             <MobileRecordCard
               key={allocation.id}
               title={allocation.unit_name_snapshot}
-              subtitle={allocation.tenant_name_snapshot || 'Vacant unit'}
+              subtitle={allocation.tenant_name_snapshot || (allocation.unit_status_snapshot === 'inactive' ? 'Inactive unit' : 'Vacant unit')}
               status={allocation.demand_status || allocation.status}
               meta={[
                 ['Area', allocation.floor_area_sqm_snapshot === null ? '-' : `${Number(allocation.floor_area_sqm_snapshot).toLocaleString()} sqm`],
@@ -249,9 +257,9 @@ const ServiceChargeBudgetSchedule = () => {
             >
               <div className="w-100 d-grid gap-2">
                 <label className="form-label mb-0">Final charge</label>
-                <input className="form-control" type="number" min="0" step="0.01" value={draftRows[allocation.id]?.final_charge ?? allocation.final_charge} disabled={budget.status === 'issued'} onChange={(event) => setDraftRows((current) => ({ ...current, [allocation.id]: { ...current[allocation.id], final_charge: event.target.value } }))} />
+                <input className="form-control" type="number" min="0" step="0.01" value={draftRows[allocation.id]?.final_charge ?? allocation.final_charge} disabled={budget.status === 'issued' || !isBillingEligible(allocation)} onChange={(event) => setDraftRows((current) => ({ ...current, [allocation.id]: { ...current[allocation.id], final_charge: event.target.value } }))} />
                 <label className="form-label mb-0 mt-1">Adjustment note</label>
-                <input className="form-control" value={draftRows[allocation.id]?.adjustment_note ?? ''} disabled={budget.status === 'issued'} onChange={(event) => setDraftRows((current) => ({ ...current, [allocation.id]: { ...current[allocation.id], adjustment_note: event.target.value } }))} placeholder="Reason for adjustment" />
+                <input className="form-control" value={draftRows[allocation.id]?.adjustment_note ?? ''} disabled={budget.status === 'issued' || !isBillingEligible(allocation)} onChange={(event) => setDraftRows((current) => ({ ...current, [allocation.id]: { ...current[allocation.id], adjustment_note: event.target.value } }))} placeholder={isBillingEligible(allocation) ? 'Reason for adjustment' : 'Owner / unallocated liability'} />
                 <div className="d-flex justify-content-end mt-1">
                   {allocation.demand_id
                     ? <button className="btn btn-light btn-sm d-flex align-items-center gap-2" type="button" onClick={() => navigate(`/service-charges/${allocation.demand_id}/document`)}><IconEye size={16} /> Preview demand</button>
@@ -260,11 +268,28 @@ const ServiceChargeBudgetSchedule = () => {
               </div>
             </MobileRecordCard>
           ))}
-          {!isLoading && allocations.length === 0 && <EmptyState compact title="No schedule yet" description="Click Calculate to allocate the budget across active property units." icon={IconCalculator} />}
+          {!isLoading && allocations.length === 0 && <EmptyState compact title="No schedule available" description="Calculation runs automatically when the property and unit setup is ready." icon={IconCalculator} />}
         </div>
       </section>
 
-      <ConfirmModal isOpen={confirmIssue} title="Approve and issue demands?" message={`This will create ${allocations.length} tenant demand record${allocations.length === 1 ? '' : 's'}. The schedule must match the budget and every unit must have an active occupant.`} confirmLabel="Approve and issue" isWorking={isWorking} onCancel={() => setConfirmIssue(false)} onConfirm={issue} />
+      <ConfirmModal
+        isOpen={confirmIssue}
+        title="Create tenant demands"
+        message="The schedule is calculated and reconciled. Confirm the final step below."
+        details={(
+          <div className="d-grid gap-2">
+            <div className="d-flex justify-content-between gap-3"><span className="text-secondary">Tenant demands to create</span><strong>{billableAllocations.length}</strong></div>
+            <div className="d-flex justify-content-between gap-3"><span className="text-secondary">Tenant demand total</span><strong>{money.format(currentFinalTotal)}</strong></div>
+            <div className="d-flex justify-content-between gap-3"><span className="text-secondary">Owner / unallocated liability</span><strong>{money.format(ownerLiabilityTotal)}</strong></div>
+            <small className="text-secondary">No demand is created for vacant, inactive, or unconfigured space.</small>
+          </div>
+        )}
+        confirmLabel="Create demands"
+        variant="info"
+        isWorking={isWorking}
+        onCancel={() => setConfirmIssue(false)}
+        onConfirm={issue}
+      />
       <FeedbackModal isOpen={Boolean(feedbackModal)} {...(feedbackModal || {})} onClose={() => setFeedbackModal(null)} />
     </div>
   );

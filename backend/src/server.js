@@ -18,6 +18,7 @@ import serviceChargeDemandRoutes from './routes/serviceChargeDemandRoutes.js';
 import serviceChargeBudgetRoutes from './routes/serviceChargeBudgetRoutes.js';
 import serviceChargeAllocationRoutes from './routes/serviceChargeAllocationRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
+import userRoutes from './routes/userRoutes.js';
 
 dotenv.config();
 
@@ -35,10 +36,10 @@ app.use(helmet());
 */
 
 //Prevent huge payload attacks
-app.use(express.json({ limit: '10kb' }));
+app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({
     extended: false,
-    limit: '10kb'
+    limit: '100kb'
 }));
 
 // Add cors so frontend and backend can communicate
@@ -69,6 +70,7 @@ app.use('/api/service-charge-demands', serviceChargeDemandRoutes);
 app.use('/api/service-charge-budgets', serviceChargeBudgetRoutes);
 app.use('/api/service-charge-allocations', serviceChargeAllocationRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/users', userRoutes);
 
 /*
 |--------------------------------------------------------------------------

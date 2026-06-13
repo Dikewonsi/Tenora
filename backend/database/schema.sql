@@ -22,11 +22,18 @@ CREATE TABLE users (
     full_name VARCHAR(150) NOT NULL,
     email VARCHAR(150) UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
-    role VARCHAR(50) DEFAULT 'admin',
-    is_active BOOLEAN DEFAULT TRUE,
+    role VARCHAR(50) NOT NULL DEFAULT 'admin',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_login_at TIMESTAMP,
+    password_changed_at TIMESTAMP,
+    token_version INTEGER NOT NULL DEFAULT 1,
     created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    CHECK (role IN ('super_admin', 'admin', 'user')),
+    CHECK (token_version >= 1)
 );
+
+CREATE UNIQUE INDEX idx_users_email_lower ON users (LOWER(email));
 
 CREATE TABLE properties (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -37,7 +44,8 @@ CREATE TABLE properties (
     total_units INT DEFAULT 1,
     total_lettable_space DECIMAL(12,2),
     created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    CHECK (total_lettable_space IS NULL OR total_lettable_space >= 0)
 );
 
 CREATE TABLE tenants (
@@ -101,8 +109,16 @@ CREATE TABLE service_charge_budgets (
     status VARCHAR(30) NOT NULL DEFAULT 'draft',
     total_units INT DEFAULT 0,
     total_area_sqm DECIMAL(14,2) DEFAULT 0,
+    denominator_area_sqm DECIMAL(14,2),
+    configured_area_sqm DECIMAL(14,2),
+    occupied_billed_area_sqm DECIMAL(14,2),
+    vacant_area_sqm DECIMAL(14,2),
+    inactive_area_sqm DECIMAL(14,2),
+    unconfigured_area_sqm DECIMAL(14,2),
     calculated_total DECIMAL(14,2) DEFAULT 0,
     final_total DECIMAL(14,2) DEFAULT 0,
+    tenant_demand_total DECIMAL(14,2),
+    owner_liability_total DECIMAL(14,2),
     due_date DATE,
     payment_instruction TEXT,
     budget_note TEXT,
@@ -114,6 +130,14 @@ CREATE TABLE service_charge_budgets (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     CHECK (total_budget >= 0),
+    CHECK (denominator_area_sqm IS NULL OR denominator_area_sqm >= 0),
+    CHECK (configured_area_sqm IS NULL OR configured_area_sqm >= 0),
+    CHECK (occupied_billed_area_sqm IS NULL OR occupied_billed_area_sqm >= 0),
+    CHECK (vacant_area_sqm IS NULL OR vacant_area_sqm >= 0),
+    CHECK (inactive_area_sqm IS NULL OR inactive_area_sqm >= 0),
+    CHECK (unconfigured_area_sqm IS NULL OR unconfigured_area_sqm >= 0),
+    CHECK (tenant_demand_total IS NULL OR tenant_demand_total >= 0),
+    CHECK (owner_liability_total IS NULL OR owner_liability_total >= 0),
     CHECK (period_end >= period_start),
     CHECK (calculation_method IN ('flat_rate', 'pro_rata')),
     CHECK (
@@ -137,6 +161,8 @@ CREATE TABLE service_charge_allocations (
     tenant_email_snapshot VARCHAR(150),
     tenant_phone_snapshot VARCHAR(50),
     floor_area_sqm_snapshot DECIMAL(12,2),
+    unit_status_snapshot VARCHAR(30),
+    billing_eligible BOOLEAN,
     percentage_share DECIMAL(18,10) NOT NULL DEFAULT 0,
     calculated_charge DECIMAL(14,2) NOT NULL DEFAULT 0,
     final_charge DECIMAL(14,2) NOT NULL DEFAULT 0,
@@ -146,6 +172,7 @@ CREATE TABLE service_charge_allocations (
     updated_at TIMESTAMP DEFAULT NOW(),
     UNIQUE (budget_id, unit_id),
     CHECK (floor_area_sqm_snapshot IS NULL OR floor_area_sqm_snapshot >= 0),
+    CHECK (unit_status_snapshot IS NULL OR unit_status_snapshot IN ('active', 'inactive')),
     CHECK (percentage_share >= 0),
     CHECK (calculated_charge >= 0),
     CHECK (final_charge >= 0),

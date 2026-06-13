@@ -24,7 +24,7 @@ const emptyForm = {
   total_budget: '',
   period_start: '',
   period_end: '',
-  calculation_method: 'flat_rate',
+  calculation_method: 'pro_rata',
   due_date: '',
   payment_instruction: '',
   budget_note: ''
@@ -108,7 +108,7 @@ const ServiceChargeBudgets = () => {
       total_budget: budget.total_budget || '',
       period_start: dateOnly(budget.period_start),
       period_end: dateOnly(budget.period_end),
-      calculation_method: budget.calculation_method || 'flat_rate',
+      calculation_method: budget.calculation_method || 'pro_rata',
       due_date: dateOnly(budget.due_date),
       payment_instruction: budget.payment_instruction || '',
       budget_note: budget.budget_note || ''
@@ -131,17 +131,43 @@ const ServiceChargeBudgets = () => {
       basis: form.calculation_method === 'pro_rata' ? 'floor_area' : null,
       due_date: form.due_date || null
     };
+    const calculationInputsChanged = !editingBudget
+      || editingBudget.property_id !== payload.property_id
+      || Number(editingBudget.total_budget) !== payload.total_budget
+      || dateOnly(editingBudget.period_start) !== payload.period_start
+      || dateOnly(editingBudget.period_end) !== payload.period_end
+      || editingBudget.calculation_method !== payload.calculation_method;
 
     try {
+      let savedBudget;
+
       if (editingBudget) {
-        await apiClient.put(`/service-charge-budgets/${editingBudget.id}`, payload);
+        const response = await apiClient.put(`/service-charge-budgets/${editingBudget.id}`, payload);
+        savedBudget = response.data.data.budget;
       } else {
-        await apiClient.post('/service-charge-budgets', payload);
+        const response = await apiClient.post('/service-charge-budgets', payload);
+        savedBudget = response.data.data.budget;
+      }
+
+      if (calculationInputsChanged) {
+        try {
+          await apiClient.post(`/service-charge-budgets/${savedBudget.id}/calculate`);
+        } catch (calculationError) {
+          closeModal();
+          setFeedbackModal({
+            variant: 'warning',
+            title: 'Budget saved, calculation needs attention',
+            message: calculationError.response?.data?.message || calculationError.message,
+            guidance: 'The budget remains in draft. Correct the property or unit setup, then reopen the schedule; calculation will retry automatically.'
+          });
+          await fetchBudgets();
+          return;
+        }
       }
 
       closeModal();
-      setFeedbackModal({ variant: 'success', title: editingBudget ? 'Budget updated' : 'Budget created', message: 'The service charge budget was saved.' });
       await fetchBudgets();
+      navigate(`/service-charges/${savedBudget.id}/schedule`);
     } catch (error) {
       setFeedbackModal({ variant: 'danger', title: 'Budget could not be saved', message: error.response?.data?.message || error.message });
     } finally {
@@ -240,10 +266,10 @@ const ServiceChargeBudgets = () => {
 
       {modalOpen && <div className="tenora-property-modal-backdrop">
         <form className="tenora-property-modal tenora-budget-modal" onSubmit={handleSubmit}>
-          <header><div><span>{editingBudget ? 'Budget details' : 'New service charge budget'}</span><h3>{editingBudget ? 'Edit budget' : 'Create service charge budget'}</h3><p>Choose one calculation method for all active units.</p></div><button className="btn btn-light btn-icon" type="button" onClick={closeModal}><IconX size={18} /></button></header>
+          <header><div><span>{editingBudget ? 'Budget details' : 'New service charge budget'}</span><h3>{editingBudget ? 'Edit budget' : 'Create service charge budget'}</h3><p>Charges use each physical unit area against the property total lettable space.</p></div><button className="btn btn-light btn-icon" type="button" onClick={closeModal}><IconX size={18} /></button></header>
           <div className="tenora-property-modal-body">
             <div className="tenora-form-section"><div><strong>Budget identity</strong><span>Select the property and name this charging period clearly.</span></div><div className="row g-3"><div className="col-12 col-md-6"><label className="form-label">Property</label><select className="form-select" value={form.property_id} onChange={(event) => setForm((current) => ({ ...current, property_id: event.target.value }))} required><option value="">Select property</option>{properties.map((property) => <option key={property.id} value={property.id}>{propertyLabel(property)}</option>)}</select></div><div className="col-12 col-md-6"><label className="form-label">Budget title</label><input className="form-control" value={form.budget_title} onChange={(event) => setForm((current) => ({ ...current, budget_title: event.target.value }))} placeholder="2026 Service Charge Budget" required /></div></div></div>
-            <div className="tenora-form-section"><div><strong>Calculation</strong><span>Use flat rate or pro rata by unit floor area.</span></div><div className="row g-3"><div className="col-12 col-md-6"><label className="form-label">Total budget</label><input className="form-control" type="number" min="0.01" step="0.01" value={form.total_budget} onChange={(event) => setForm((current) => ({ ...current, total_budget: event.target.value }))} required /></div><div className="col-12 col-md-6"><label className="form-label">Calculation method</label><select className="form-select" value={form.calculation_method} onChange={(event) => setForm((current) => ({ ...current, calculation_method: event.target.value }))}><option value="flat_rate">Flat rate</option><option value="pro_rata">Pro rata by floor area</option></select></div></div></div>
+            <div className="tenora-form-section"><div><strong>Calculation</strong><span>Pro rata by floor area is required for new budgets.</span></div><div className="row g-3"><div className="col-12 col-md-6"><label className="form-label">Total budget</label><input className="form-control" type="number" min="0.01" step="0.01" value={form.total_budget} onChange={(event) => setForm((current) => ({ ...current, total_budget: event.target.value }))} required /></div><div className="col-12 col-md-6"><label className="form-label">Calculation method</label><input className="form-control" value={form.calculation_method === 'flat_rate' ? 'Legacy flat rate (read only)' : 'Pro rata by property lettable area'} readOnly /></div></div></div>
             <div className="tenora-form-section"><div><strong>Period and notice</strong><span>Set the service period and optional demand due date.</span></div><div className="row g-3"><div className="col-12 col-md-4"><label className="form-label">Period start</label><input className="form-control" type="date" value={form.period_start} onChange={(event) => setForm((current) => ({ ...current, period_start: event.target.value }))} required /></div><div className="col-12 col-md-4"><label className="form-label">Period end</label><input className="form-control" type="date" value={form.period_end} onChange={(event) => setForm((current) => ({ ...current, period_end: event.target.value }))} required /></div><div className="col-12 col-md-4"><label className="form-label">Demand due date</label><input className="form-control" type="date" value={form.due_date} onChange={(event) => setForm((current) => ({ ...current, due_date: event.target.value }))} /></div><div className="col-12"><label className="form-label">Payment instruction</label><textarea className="form-control" rows="2" value={form.payment_instruction} onChange={(event) => setForm((current) => ({ ...current, payment_instruction: event.target.value }))} /></div><div className="col-12"><label className="form-label">Budget note</label><textarea className="form-control" rows="2" value={form.budget_note} onChange={(event) => setForm((current) => ({ ...current, budget_note: event.target.value }))} /></div></div></div>
           </div>
           <footer><button className="btn btn-light border" type="button" onClick={closeModal}>Cancel</button><button className="btn btn-primary tenora-primary-btn" type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save budget'}</button></footer>

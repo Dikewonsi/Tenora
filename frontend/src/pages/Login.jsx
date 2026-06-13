@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 const Login = () => {
   const {
     accessError,
+    authError,
     accessStatus,
     isAccessExpired,
     isAccessLoading,
@@ -205,9 +206,9 @@ const Login = () => {
                 </div>
               )}
 
-              {!error && (isAccessExpired || accessError) && (
+              {!error && (authError || isAccessExpired || accessError) && (
                 <div className="alert alert-danger rounded-4 border-0" role="alert">
-                  {isAccessExpired ? expiredMessage : accessError}
+                  {authError || (isAccessExpired ? expiredMessage : accessError)}
                 </div>
               )}
 

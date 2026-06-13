@@ -2,12 +2,12 @@ const BASE_URL = process.env.API_BASE_URL || 'http://127.0.0.1:8000/api';
 
 let token;
 
-const request = async (method, path, body, expectedStatus = null) => {
+const request = async (method, path, body, expectedStatus = null, requestToken = token) => {
     const response = await fetch(`${BASE_URL}${path}`, {
         method,
         headers: {
             'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {})
+            ...(requestToken ? { Authorization: `Bearer ${requestToken}` } : {})
         },
         body: body ? JSON.stringify(body) : undefined
     });
@@ -29,6 +29,10 @@ const request = async (method, path, body, expectedStatus = null) => {
     return data;
 };
 
+const requestAs = (requestToken, method, path, body, expectedStatus = null) => (
+    request(method, path, body, expectedStatus, requestToken)
+);
+
 const assert = (condition, message) => {
     if(!condition) throw new Error(message);
 };
@@ -48,29 +52,201 @@ const run = async () => {
         password: 'password123'
     });
     token = login.data.token;
+    const primaryUser = login.data.user;
+    assert(primaryUser.role === 'super_admin', 'Existing administrator must be migrated to super_admin');
+
+    const meResponse = await request('GET', '/auth/me');
+    assert(meResponse.data.user.id === primaryUser.id, '/auth/me must return the current database user');
+    assert(meResponse.data.user.role === 'super_admin', '/auth/me must return the current database role');
+    assert(!Object.hasOwn(meResponse.data.user, 'password_hash'), '/auth/me must never return password_hash');
+    assert(!Object.hasOwn(meResponse.data.user, 'passwordHash'), '/auth/me must never return passwordHash');
+
+    const initialUsers = await request('GET', '/users');
+    assert(Array.isArray(initialUsers.data.users), 'Super admin must be able to list users');
+
+    if(Number(initialUsers.data.summary.super_admins) === 1) {
+        const disableLastAdmin = await request('PATCH', `/users/${primaryUser.id}/status`, {
+            is_active: false
+        }, 400);
+        assert(disableLastAdmin.code === 'LAST_SUPER_ADMIN', 'Last active super admin cannot be disabled');
+        const demoteLastAdmin = await request('PUT', `/users/${primaryUser.id}`, {
+            role: 'admin'
+        }, 400);
+        assert(demoteLastAdmin.code === 'LAST_SUPER_ADMIN', 'Last active super admin cannot be demoted');
+    }
+
+    const managedEmail = `managed-${stamp}@example.com`;
+    const managedPassword = 'SecurePass123';
+    const managedResponse = await request('POST', '/users', {
+        full_name: `Managed Admin ${stamp}`,
+        email: managedEmail.toUpperCase(),
+        role: 'admin',
+        password: managedPassword
+    });
+    const managedUser = managedResponse.data.user;
+    assert(managedUser.email === managedEmail, 'User email must be normalized to lowercase');
+    assert(!Object.hasOwn(managedUser, 'password_hash'), 'User API must never return password_hash');
+    assert(!Object.hasOwn(managedUser, 'passwordHash'), 'User API must never return passwordHash');
+
+    await request('POST', '/users', {
+        full_name: 'Duplicate Email',
+        email: managedEmail.toUpperCase(),
+        role: 'user',
+        password: managedPassword
+    }, 400);
+    await request('POST', '/users', {
+        full_name: 'Weak Password',
+        email: `weak-${stamp}@example.com`,
+        role: 'user',
+        password: 'short'
+    }, 400);
+    await request('POST', '/users', {
+        full_name: 'Invalid Role',
+        email: `invalid-role-${stamp}@example.com`,
+        role: 'owner',
+        password: managedPassword
+    }, 400);
+
+    const managedLogin = await request('POST', '/auth/login', {
+        email: managedEmail,
+        password: managedPassword
+    });
+    const managedToken = managedLogin.data.token;
+    await requestAs(managedToken, 'GET', '/users', undefined, 403);
+
+    await request('PUT', `/users/${managedUser.id}`, { role: 'super_admin' });
+    await requestAs(managedToken, 'GET', '/users');
+    await request('PUT', `/users/${managedUser.id}`, { role: 'admin' });
+    await requestAs(managedToken, 'GET', '/users', undefined, 403);
+
+    await request('PATCH', `/users/${managedUser.id}/status`, { is_active: false });
+    const disabledRequest = await requestAs(managedToken, 'GET', '/dashboard/summary', undefined, 403);
+    assert(disabledRequest.code === 'ACCOUNT_DISABLED', 'Disabled user token must fail every protected request');
+    await request('POST', '/auth/login', {
+        email: managedEmail,
+        password: managedPassword
+    }, 403);
+
+    await request('PATCH', `/users/${managedUser.id}/status`, { is_active: true });
+    const reactivatedLogin = await request('POST', '/auth/login', {
+        email: managedEmail,
+        password: managedPassword
+    });
+    const reactivatedToken = reactivatedLogin.data.token;
+    await requestAs(reactivatedToken, 'GET', '/dashboard/summary');
+
+    const replacementPassword = 'Replacement456';
+    await request('PATCH', `/users/${managedUser.id}/password`, {
+        password: replacementPassword
+    });
+    const revokedRequest = await requestAs(reactivatedToken, 'GET', '/dashboard/summary', undefined, 401);
+    assert(revokedRequest.code === 'TOKEN_REVOKED', 'Password reset must invalidate existing tokens');
+    await request('POST', '/auth/login', {
+        email: managedEmail,
+        password: managedPassword
+    }, 401);
+    const replacementLogin = await request('POST', '/auth/login', {
+        email: managedEmail,
+        password: replacementPassword
+    });
+    await requestAs(replacementLogin.data.token, 'GET', '/dashboard/summary');
+
+    const basicUserResponse = await request('POST', '/users', {
+        full_name: `Basic User ${stamp}`,
+        email: `basic-${stamp}@example.com`,
+        role: 'user',
+        password: managedPassword
+    });
+    const basicLogin = await request('POST', '/auth/login', {
+        email: basicUserResponse.data.user.email,
+        password: managedPassword
+    });
+    await requestAs(basicLogin.data.token, 'GET', '/users', undefined, 403);
+
+    const rollbackName = `Rollback Property ${stamp}`;
+    await request('POST', '/properties', {
+        property_name: rollbackName,
+        address: '2 Rollback Close, Lagos',
+        total_lettable_space: 100,
+        units: [
+            { unit_name: 'DUP', floor_area_sqm: 40, status: 'active' },
+            { unit_name: 'DUP', floor_area_sqm: 40, status: 'inactive' }
+        ]
+    }, 400);
+    const rollbackSearch = await request('GET', `/properties?search=${encodeURIComponent(rollbackName)}`);
+    assert(rollbackSearch.data.properties.length === 0, 'Failed onboarding must roll back the property and all units');
 
     const propertyResponse = await request('POST', '/properties', {
         property_name: `Smoke Property ${stamp}`,
         address: '1 Verification Close, Lagos',
         location: 'Lagos',
-        property_description: 'Current product smoke test'
+        property_description: 'Current product smoke test',
+        total_lettable_space: 500,
+        units: [
+            { unit_name: 'A1', floor_area_sqm: 120, bedrooms: 2, status: 'active' },
+            { unit_name: 'A2', floor_area_sqm: 180, bedrooms: 3, status: 'active' }
+        ]
     });
     const property = propertyResponse.data.property;
+    assert(Number(property.total_lettable_space) === 500, 'Property must preserve management-entered total lettable space');
+    assert(Number(property.configured_unit_area_sqm) === 300, 'Property response must derive configured area from all units');
 
-    const firstUnitResponse = await request('POST', '/units', {
+    const unitsResponse = await request('GET', `/units?property_id=${property.id}`);
+    const firstUnit = unitsResponse.data.units.find((unit) => unit.unit_name === 'A1');
+    const secondUnit = unitsResponse.data.units.find((unit) => unit.unit_name === 'A2');
+    assert(firstUnit && secondUnit, 'Transactional onboarding must create both units');
+
+    await request('POST', '/units', {
         property_id: property.id,
-        unit_name: 'A1',
-        floor_area_sqm: 120,
-        bedrooms: 2,
+        unit_name: 'V1',
+        floor_area_sqm: 50,
         status: 'active'
     });
-    const secondUnitResponse = await request('POST', '/units', {
+    await request('POST', '/units', {
         property_id: property.id,
-        unit_name: 'A2',
-        floor_area_sqm: 180,
-        bedrooms: 3,
-        status: 'active'
+        unit_name: 'I1',
+        floor_area_sqm: 50,
+        status: 'inactive'
     });
+    await request('POST', '/units', {
+        property_id: property.id,
+        unit_name: 'OVER',
+        floor_area_sqm: 101,
+        status: 'active'
+    }, 400);
+    const reconciledPropertyResponse = await request('GET', `/properties/${property.id}`);
+    assert(
+        Number(reconciledPropertyResponse.data.property.configured_unit_area_sqm) === 400,
+        'Configured area must include inactive physical units'
+    );
+    await request('PUT', `/properties/${property.id}`, {
+        total_lettable_space: 399
+    }, 400);
+
+    const emptyPropertyResponse = await request('POST', '/properties', {
+        property_name: `Empty Property ${stamp}`,
+        address: '3 Empty Close, Lagos',
+        total_lettable_space: 250,
+        units: []
+    });
+    assert(
+        Number(emptyPropertyResponse.data.property.configured_unit_area_sqm) === 0,
+        'Property creation with no units must preserve zero configured area'
+    );
+    const equalAreaPropertyResponse = await request('POST', '/properties', {
+        property_name: `Equal Area Property ${stamp}`,
+        address: '4 Equal Close, Lagos',
+        total_lettable_space: 250,
+        units: [
+            { unit_name: 'E1', floor_area_sqm: 100, status: 'active' },
+            { unit_name: 'E2', floor_area_sqm: 150, status: 'inactive' }
+        ]
+    });
+    assert(
+        Number(equalAreaPropertyResponse.data.property.configured_unit_area_sqm) === 250
+        && Number(equalAreaPropertyResponse.data.property.unconfigured_area_sqm) === 0,
+        'Configured unit area may equal total lettable space'
+    );
 
     const firstTenantResponse = await request('POST', '/tenants', {
         full_name: `Smoke Tenant One ${stamp}`,
@@ -87,7 +263,7 @@ const run = async () => {
     const firstLeaseResponse = await request('POST', '/leases', {
         property_id: property.id,
         tenant_id: firstTenantResponse.data.tenant.id,
-        unit_id: firstUnitResponse.data.unit.id,
+        unit_id: firstUnit.id,
         start_date: '2026-01-01',
         end_date: leaseEndDate,
         rent_amount: 2400000,
@@ -97,7 +273,7 @@ const run = async () => {
     const secondLeaseResponse = await request('POST', '/leases', {
         property_id: property.id,
         tenant_id: secondTenantResponse.data.tenant.id,
-        unit_id: secondUnitResponse.data.unit.id,
+        unit_id: secondUnit.id,
         start_date: '2026-01-01',
         end_date: '2026-12-31',
         rent_amount: 3600000,
@@ -127,13 +303,31 @@ const run = async () => {
     });
     const budget = budgetResponse.data.budget;
     const calculatedResponse = await request('POST', `/service-charge-budgets/${budget.id}/calculate`);
-    assert(calculatedResponse.data.schedule.allocations.length === 2, 'Budget must allocate to both units');
+    const calculatedSchedule = calculatedResponse.data.schedule;
+    assert(calculatedSchedule.allocations.length === 4, 'Budget must reconcile every physical unit');
+    assert(Number(calculatedSchedule.budget.denominator_area_sqm) === 500, 'Budget must snapshot the property denominator');
+    assert(Number(calculatedSchedule.budget.configured_area_sqm) === 400, 'Budget must snapshot all configured physical area');
+    assert(Number(calculatedSchedule.budget.occupied_billed_area_sqm) === 300, 'Only occupied active area is tenant billed');
+    assert(Number(calculatedSchedule.budget.vacant_area_sqm) === 50, 'Vacant active area must remain owner liability');
+    assert(Number(calculatedSchedule.budget.inactive_area_sqm) === 50, 'Inactive area must remain owner liability');
+    assert(Number(calculatedSchedule.budget.unconfigured_area_sqm) === 100, 'Unconfigured area must remain owner liability');
+    assert(Number(calculatedSchedule.validation.tenant_demand_total) === 4500000, 'Tenant demands must use total lettable space as denominator');
+    assert(Number(calculatedSchedule.validation.owner_liability_total) === 3000000, 'Vacant, inactive, and unconfigured shares must not be redistributed');
 
     const issuedResponse = await request('POST', `/service-charge-budgets/${budget.id}/issue`);
     const allocations = issuedResponse.data.schedule.allocations;
-    assert(allocations.every((allocation) => allocation.demand_id), 'Issuance must create a demand per allocation');
+    const demandedAllocations = allocations.filter((allocation) => allocation.demand_id);
+    assert(demandedAllocations.length === 2, 'Issuance must create demands only for occupied active units');
+    assert(
+        allocations.filter((allocation) => !allocation.billing_eligible).every((allocation) => !allocation.demand_id),
+        'Vacant and inactive units must not receive tenant demands'
+    );
+    await request('POST', `/service-charge-budgets/${budget.id}/calculate`, undefined, 400);
+    await request('PUT', `/service-charge-budgets/${budget.id}`, {
+        total_budget: 8000000
+    }, 400);
 
-    const demandId = allocations[0].demand_id;
+    const demandId = demandedAllocations[0].demand_id;
     const documentResponse = await request('GET', `/service-charge-demands/${demandId}/document`);
     assert(documentResponse.data.document.tenant.full_name, 'Demand preview must include tenant');
     assert(Number(documentResponse.data.document.totals.total_amount) > 0, 'Demand preview must include total');

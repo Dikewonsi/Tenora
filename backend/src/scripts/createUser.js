@@ -8,7 +8,7 @@ await pool.query(
         INSERT INTO users (full_name, email, password_hash, role)
         VALUES ($1, $2, $3, $4)
     `,
-    ['Admin User', 'admin@tenora.com', passwordHash, 'admin']
+    ['Admin User', 'admin@tenora.com', passwordHash, 'super_admin']
 );
 
 console.log('User created');

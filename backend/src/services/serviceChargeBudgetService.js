@@ -14,8 +14,16 @@ const budgetColumns = `
     service_charge_budgets.status,
     service_charge_budgets.total_units,
     service_charge_budgets.total_area_sqm,
+    service_charge_budgets.denominator_area_sqm,
+    service_charge_budgets.configured_area_sqm,
+    service_charge_budgets.occupied_billed_area_sqm,
+    service_charge_budgets.vacant_area_sqm,
+    service_charge_budgets.inactive_area_sqm,
+    service_charge_budgets.unconfigured_area_sqm,
     service_charge_budgets.calculated_total,
     service_charge_budgets.final_total,
+    service_charge_budgets.tenant_demand_total,
+    service_charge_budgets.owner_liability_total,
     service_charge_budgets.due_date,
     service_charge_budgets.payment_instruction,
     service_charge_budgets.budget_note,
@@ -40,8 +48,16 @@ const budgetReturningColumns = `
     status,
     total_units,
     total_area_sqm,
+    denominator_area_sqm,
+    configured_area_sqm,
+    occupied_billed_area_sqm,
+    vacant_area_sqm,
+    inactive_area_sqm,
+    unconfigured_area_sqm,
     calculated_total,
     final_total,
+    tenant_demand_total,
+    owner_liability_total,
     due_date,
     payment_instruction,
     budget_note,
@@ -65,6 +81,8 @@ const allocationColumns = `
     service_charge_allocations.tenant_email_snapshot,
     service_charge_allocations.tenant_phone_snapshot,
     service_charge_allocations.floor_area_sqm_snapshot,
+    service_charge_allocations.unit_status_snapshot,
+    service_charge_allocations.billing_eligible,
     service_charge_allocations.percentage_share,
     service_charge_allocations.calculated_charge,
     service_charge_allocations.final_charge,
@@ -107,13 +125,13 @@ const validateBudgetData = ({
         throw error;
     }
 
-    if(!['flat_rate', 'pro_rata'].includes(calculation_method)) {
-        const error = new Error('Calculation method must be flat_rate or pro_rata');
+    if(calculation_method !== 'pro_rata') {
+        const error = new Error('New service charge budgets must use pro rata floor-area allocation');
         error.status = 400;
         throw error;
     }
 
-    if(calculation_method === 'pro_rata' && basis !== 'floor_area') {
+    if(basis !== 'floor_area') {
         const error = new Error('Pro rata budgets must use floor_area as the basis');
         error.status = 400;
         throw error;
@@ -125,7 +143,8 @@ const getBudgetById = async (id, client = pool) => {
         `
             SELECT
                 ${budgetColumns},
-                properties.property_name
+                properties.property_name,
+                properties.total_lettable_space AS property_total_lettable_space
             FROM service_charge_budgets
             INNER JOIN properties ON properties.id = service_charge_budgets.property_id
             WHERE service_charge_budgets.id = $1
@@ -296,8 +315,16 @@ const updateBudget = async (id, budgetData) => {
                     status = CASE WHEN $12::boolean THEN 'draft' ELSE status END,
                     total_units = CASE WHEN $12::boolean THEN 0 ELSE total_units END,
                     total_area_sqm = CASE WHEN $12::boolean THEN 0 ELSE total_area_sqm END,
+                    denominator_area_sqm = CASE WHEN $12::boolean THEN NULL ELSE denominator_area_sqm END,
+                    configured_area_sqm = CASE WHEN $12::boolean THEN NULL ELSE configured_area_sqm END,
+                    occupied_billed_area_sqm = CASE WHEN $12::boolean THEN NULL ELSE occupied_billed_area_sqm END,
+                    vacant_area_sqm = CASE WHEN $12::boolean THEN NULL ELSE vacant_area_sqm END,
+                    inactive_area_sqm = CASE WHEN $12::boolean THEN NULL ELSE inactive_area_sqm END,
+                    unconfigured_area_sqm = CASE WHEN $12::boolean THEN NULL ELSE unconfigured_area_sqm END,
                     calculated_total = CASE WHEN $12::boolean THEN 0 ELSE calculated_total END,
                     final_total = CASE WHEN $12::boolean THEN 0 ELSE final_total END,
+                    tenant_demand_total = CASE WHEN $12::boolean THEN NULL ELSE tenant_demand_total END,
+                    owner_liability_total = CASE WHEN $12::boolean THEN NULL ELSE owner_liability_total END,
                     calculated_at = CASE WHEN $12::boolean THEN NULL ELSE calculated_at END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = $11
@@ -365,28 +392,20 @@ const deleteBudget = async (id) => {
     }
 };
 
-const buildRoundedAllocations = (units, totalBudget, calculationMethod) => {
+const buildRoundedAllocations = (units, totalBudget, denominatorArea) => {
     const totalCents = toCents(totalBudget);
-
-    if(calculationMethod === 'flat_rate') {
-        const baseCents = Math.floor(totalCents / units.length);
-        let remainder = totalCents - (baseCents * units.length);
-
-        return units.map((unit) => {
-            const chargeCents = baseCents + (remainder > 0 ? 1 : 0);
-            remainder = Math.max(remainder - 1, 0);
-
-            return {
-                ...unit,
-                percentageShare: 1 / units.length,
-                charge: fromCents(chargeCents)
-            };
-        });
-    }
-
-    const totalArea = units.reduce((total, unit) => total + Number(unit.floor_area_sqm), 0);
-    const rawAllocations = units.map((unit, index) => {
-        const percentageShare = Number(unit.floor_area_sqm) / totalArea;
+    const configuredArea = units.reduce((total, unit) => total + Number(unit.floor_area_sqm), 0);
+    const components = [
+        ...units.map((unit) => ({ ...unit, isUnconfigured: false })),
+        {
+            id: null,
+            unit_name: 'Unconfigured area',
+            floor_area_sqm: Math.max(denominatorArea - configuredArea, 0),
+            isUnconfigured: true
+        }
+    ];
+    const rawAllocations = components.map((unit, index) => {
+        const percentageShare = Number(unit.floor_area_sqm) / denominatorArea;
         const rawCents = totalCents * percentageShare;
 
         return {
@@ -408,6 +427,7 @@ const buildRoundedAllocations = (units, totalBudget, calculationMethod) => {
 
     return rawAllocations
         .sort((first, second) => first.index - second.index)
+        .filter((unit) => !unit.isUnconfigured)
         .map((unit) => ({
             ...unit,
             charge: fromCents(unit.chargeCents)
@@ -427,12 +447,31 @@ const calculateBudget = async (id) => {
             throw error;
         }
 
+        if(budget.calculation_method !== 'pro_rata') {
+            const error = new Error('Legacy flat-rate budgets cannot be recalculated. Create a pro rata floor-area budget instead.');
+            error.status = 400;
+            throw error;
+        }
+
+        await client.query(
+            'SELECT id FROM properties WHERE id = $1 FOR SHARE',
+            [budget.property_id]
+        );
+        const denominatorArea = Number(budget.property_total_lettable_space || 0);
+
+        if(denominatorArea <= 0) {
+            const error = new Error('Enter a positive total lettable space for this property before calculating service charges');
+            error.status = 400;
+            throw error;
+        }
+
         const unitResult = await client.query(
             `
                 SELECT
                     units.id,
                     units.unit_name,
                     units.floor_area_sqm,
+                    units.status AS unit_status,
                     occupancy.lease_id,
                     occupancy.tenant_id,
                     occupancy.tenant_name,
@@ -456,39 +495,52 @@ const calculateBudget = async (id) => {
                     LIMIT 1
                 ) occupancy ON TRUE
                 WHERE units.property_id = $3
-                  AND units.status = 'active'
                 ORDER BY units.unit_name ASC
             `,
             [budget.period_start, budget.period_end, budget.property_id]
         );
         const units = unitResult.rows;
 
-        if(units.length === 0) {
-            const error = new Error('Add at least one active unit to this property before calculating the budget');
+        const invalidUnits = units.filter((unit) => Number(unit.floor_area_sqm || 0) <= 0);
+
+        if(invalidUnits.length > 0) {
+            const names = invalidUnits.map((unit) => unit.unit_name).join(', ');
+            const error = new Error(`Floor area must be greater than zero for every configured unit before service charge calculation. Check: ${names}`);
             error.status = 400;
             throw error;
         }
 
-        if(budget.calculation_method === 'pro_rata') {
-            const invalidUnits = units.filter((unit) => Number(unit.floor_area_sqm || 0) <= 0);
+        const configuredArea = units.reduce((total, unit) => total + Number(unit.floor_area_sqm || 0), 0);
 
-            if(invalidUnits.length > 0) {
-                const names = invalidUnits.map((unit) => unit.unit_name).join(', ');
-                const error = new Error(`Floor area must be greater than zero for every unit before pro rata calculation. Check: ${names}`);
-                error.status = 400;
-                throw error;
-            }
-        }
-
-        const totalArea = units.reduce((total, unit) => total + Number(unit.floor_area_sqm || 0), 0);
-
-        if(budget.calculation_method === 'pro_rata' && totalArea <= 0) {
-            const error = new Error('Total unit floor area must be greater than zero for pro rata calculation');
+        if(configuredArea - denominatorArea > 0.0001) {
+            const error = new Error(`Configured unit area (${configuredArea.toFixed(2)} sqm) exceeds the property total lettable space (${denominatorArea.toFixed(2)} sqm)`);
             error.status = 400;
             throw error;
         }
 
-        const allocations = buildRoundedAllocations(units, budget.total_budget, budget.calculation_method);
+        const allocations = buildRoundedAllocations(units, budget.total_budget, denominatorArea)
+            .map((allocation) => ({
+                ...allocation,
+                billingEligible: (
+                    allocation.unit_status === 'active'
+                    && Boolean(allocation.lease_id)
+                    && Boolean(allocation.tenant_id)
+                )
+            }));
+        const occupiedBilledArea = allocations
+            .filter((allocation) => allocation.billingEligible)
+            .reduce((total, allocation) => total + Number(allocation.floor_area_sqm), 0);
+        const vacantArea = allocations
+            .filter((allocation) => allocation.unit_status === 'active' && !allocation.billingEligible)
+            .reduce((total, allocation) => total + Number(allocation.floor_area_sqm), 0);
+        const inactiveArea = allocations
+            .filter((allocation) => allocation.unit_status === 'inactive')
+            .reduce((total, allocation) => total + Number(allocation.floor_area_sqm), 0);
+        const unconfiguredArea = Math.max(denominatorArea - configuredArea, 0);
+        const tenantDemandTotal = allocations
+            .filter((allocation) => allocation.billingEligible)
+            .reduce((total, allocation) => total + Number(allocation.charge), 0);
+        const ownerLiabilityTotal = Math.max(Number(budget.total_budget) - tenantDemandTotal, 0);
         await client.query('DELETE FROM service_charge_allocations WHERE budget_id = $1', [id]);
 
         for(const allocation of allocations) {
@@ -504,12 +556,14 @@ const calculateBudget = async (id) => {
                         tenant_email_snapshot,
                         tenant_phone_snapshot,
                         floor_area_sqm_snapshot,
+                        unit_status_snapshot,
+                        billing_eligible,
                         percentage_share,
                         calculated_charge,
                         final_charge,
                         status
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, 'calculated')
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, 'calculated')
                 `,
                 [
                     id,
@@ -521,6 +575,8 @@ const calculateBudget = async (id) => {
                     allocation.tenant_email,
                     allocation.tenant_phone,
                     allocation.floor_area_sqm,
+                    allocation.unit_status,
+                    allocation.billingEligible,
                     allocation.percentageShare,
                     allocation.charge
                 ]
@@ -534,15 +590,34 @@ const calculateBudget = async (id) => {
                     status = 'calculated',
                     total_units = $2,
                     total_area_sqm = $3,
-                    calculated_total = total_budget,
-                    final_total = total_budget,
+                    denominator_area_sqm = $4,
+                    configured_area_sqm = $3,
+                    occupied_billed_area_sqm = $5,
+                    vacant_area_sqm = $6,
+                    inactive_area_sqm = $7,
+                    unconfigured_area_sqm = $8,
+                    calculated_total = $9,
+                    final_total = $9,
+                    tenant_demand_total = $9,
+                    owner_liability_total = $10,
                     calculated_at = CURRENT_TIMESTAMP,
                     approved_at = NULL,
                     approved_by = NULL,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = $1
             `,
-            [id, units.length, totalArea]
+            [
+                id,
+                units.length,
+                configuredArea,
+                denominatorArea,
+                occupiedBilledArea,
+                vacantArea,
+                inactiveArea,
+                unconfiguredArea,
+                tenantDemandTotal,
+                ownerLiabilityTotal
+            ]
         );
 
         await client.query('COMMIT');
@@ -576,17 +651,31 @@ const getBudgetSchedule = async (id) => {
         [id]
     );
 
+    const allocations = result.rows;
+    const isBillingEligible = (allocation) => allocation.billing_eligible === null
+        ? Boolean(allocation.lease_id && allocation.tenant_id)
+        : allocation.billing_eligible;
+    const tenantDemandTotal = allocations
+        .filter(isBillingEligible)
+        .reduce((total, allocation) => total + Number(allocation.final_charge || 0), 0);
+    const ownerLiabilityTotal = Math.max(Number(budget.total_budget || 0) - tenantDemandTotal, 0);
+
     return {
         budget,
-        allocations: result.rows,
+        allocations,
         validation: {
-            vacant_units: result.rows
-                .filter((allocation) => !allocation.lease_id || !allocation.tenant_id)
-                .map((allocation) => allocation.unit_name_snapshot),
+            tenant_demand_total: tenantDemandTotal,
+            owner_liability_total: ownerLiabilityTotal,
+            reconciliation_total: tenantDemandTotal + ownerLiabilityTotal,
             total_matches_budget: Math.abs(
-                result.rows.reduce((total, allocation) => total + Number(allocation.final_charge || 0), 0) -
-                Number(budget.total_budget || 0)
-            ) < 0.01
+                tenantDemandTotal + ownerLiabilityTotal - Number(budget.total_budget || 0)
+            ) < 0.01,
+            billing_eligible_units: allocations
+                .filter(isBillingEligible)
+                .map((allocation) => allocation.unit_name_snapshot),
+            owner_liability_units: allocations
+                .filter((allocation) => !isBillingEligible(allocation))
+                .map((allocation) => allocation.unit_name_snapshot)
         }
     };
 };
@@ -612,7 +701,7 @@ const updateAllocation = async (id, allocationData) => {
         await client.query('BEGIN');
         const allocationResult = await client.query(
             `
-                SELECT id, budget_id, calculated_charge
+                SELECT id, budget_id, calculated_charge, billing_eligible, lease_id, tenant_id
                 FROM service_charge_allocations
                 WHERE id = $1
                 FOR UPDATE
@@ -635,6 +724,16 @@ const updateAllocation = async (id, allocationData) => {
             throw error;
         }
 
+        const isBillingEligible = allocation.billing_eligible === null
+            ? Boolean(allocation.lease_id && allocation.tenant_id)
+            : allocation.billing_eligible;
+
+        if(!isBillingEligible) {
+            const error = new Error('Owner/unallocated liability rows cannot be adjusted as tenant charges');
+            error.status = 400;
+            throw error;
+        }
+
         const result = await client.query(
             `
                 UPDATE service_charge_allocations
@@ -651,20 +750,38 @@ const updateAllocation = async (id, allocationData) => {
             `,
             [finalCharge, allocationData.adjustment_note || null, id]
         );
+        const tenantTotalResult = await client.query(
+            `
+                SELECT COALESCE(SUM(final_charge), 0) AS tenant_demand_total
+                FROM service_charge_allocations
+                WHERE budget_id = $1
+                  AND COALESCE(
+                      billing_eligible,
+                      lease_id IS NOT NULL AND tenant_id IS NOT NULL
+                  )
+            `,
+            [allocation.budget_id]
+        );
+        const tenantDemandTotal = Number(tenantTotalResult.rows[0].tenant_demand_total || 0);
+
+        if(tenantDemandTotal - Number(budget.total_budget) >= 0.01) {
+            const error = new Error('Tenant demand charges cannot exceed the total service charge budget');
+            error.status = 400;
+            throw error;
+        }
+        const ownerLiabilityTotal = Math.max(Number(budget.total_budget) - tenantDemandTotal, 0);
 
         await client.query(
             `
                 UPDATE service_charge_budgets
                 SET
-                    final_total = (
-                        SELECT COALESCE(SUM(final_charge), 0)
-                        FROM service_charge_allocations
-                        WHERE budget_id = $1
-                    ),
+                    final_total = $2,
+                    tenant_demand_total = $2,
+                    owner_liability_total = $3,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = $1
             `,
-            [allocation.budget_id]
+            [allocation.budget_id, tenantDemandTotal, ownerLiabilityTotal]
         );
 
         await client.query('COMMIT');
@@ -731,7 +848,11 @@ const issueBudget = async (id, userId) => {
             throw error;
         }
 
-        const invalidCharges = allocations.filter((allocation) => (
+        const isBillingEligible = (allocation) => allocation.billing_eligible === null
+            ? Boolean(allocation.lease_id && allocation.tenant_id)
+            : allocation.billing_eligible;
+        const billableAllocations = allocations.filter(isBillingEligible);
+        const invalidCharges = billableAllocations.filter((allocation) => (
             allocation.final_charge === null ||
             Number.isNaN(Number(allocation.final_charge)) ||
             Number(allocation.final_charge) < 0
@@ -743,24 +864,20 @@ const issueBudget = async (id, userId) => {
             throw error;
         }
 
-        const finalTotal = allocations.reduce((total, allocation) => total + Number(allocation.final_charge), 0);
+        if(billableAllocations.length === 0) {
+            const error = new Error('There are no occupied active units eligible for tenant demands');
+            error.status = 400;
+            throw error;
+        }
+        const finalTotal = billableAllocations.reduce((total, allocation) => total + Number(allocation.final_charge), 0);
 
-        if(Math.abs(finalTotal - Number(budget.total_budget)) >= 0.01) {
-            const error = new Error(`Final charges must equal the total budget before issuing. Current difference: ${Math.abs(finalTotal - Number(budget.total_budget)).toFixed(2)}`);
+        if(finalTotal - Number(budget.total_budget) >= 0.01) {
+            const error = new Error('Tenant demand charges cannot exceed the total service charge budget');
             error.status = 400;
             throw error;
         }
 
-        const vacantAllocations = allocations.filter((allocation) => !allocation.lease_id || !allocation.tenant_id);
-
-        if(vacantAllocations.length > 0) {
-            const names = vacantAllocations.map((allocation) => allocation.unit_name_snapshot).join(', ');
-            const error = new Error(`Assign an active tenant/occupant before issuing demands for: ${names}`);
-            error.status = 400;
-            throw error;
-        }
-
-        for(const allocation of allocations) {
+        for(const allocation of billableAllocations) {
             const existingDemand = await client.query(
                 'SELECT id FROM service_charge_demands WHERE allocation_id = $1',
                 [allocation.id]
@@ -834,6 +951,8 @@ const issueBudget = async (id, userId) => {
                 SET
                     status = 'issued',
                     final_total = $2,
+                    tenant_demand_total = $2,
+                    owner_liability_total = $4,
                     approved_at = COALESCE(approved_at, CURRENT_TIMESTAMP),
                     approved_by = $3,
                     issued_at = COALESCE(issued_at, CURRENT_TIMESTAMP),
@@ -841,7 +960,7 @@ const issueBudget = async (id, userId) => {
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = $1
             `,
-            [id, finalTotal, userId]
+            [id, finalTotal, userId, Math.max(Number(budget.total_budget) - finalTotal, 0)]
         );
 
         await client.query('COMMIT');

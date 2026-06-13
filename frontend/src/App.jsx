@@ -1,5 +1,6 @@
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
+import AdminRoute from './components/AdminRoute';
 import { AuthProvider } from './context/AuthContext';
 import MainLayout from './layouts/MainLayout';
 import Dashboard from './pages/Dashboard';
@@ -13,6 +14,7 @@ import Tenants from './pages/Tenants';
 import Units from './pages/Units';
 import ServiceChargeBudgets from './pages/ServiceChargeBudgets';
 import ServiceChargeBudgetSchedule from './pages/ServiceChargeBudgetSchedule';
+import UsersAccess from './pages/UsersAccess';
 
 const router = createBrowserRouter([
   {
@@ -64,6 +66,15 @@ const router = createBrowserRouter([
           {
             path: '/settings',
             element: <Settings />
+          },
+          {
+            element: <AdminRoute />,
+            children: [
+              {
+                path: '/settings/users',
+                element: <UsersAccess />
+              }
+            ]
           }
         ]
       }

@@ -1,4 +1,4 @@
-import { IconAlertCircle, IconCircleCheck, IconTrash, IconX } from '@tabler/icons-react';
+import { IconAlertCircle, IconCircleCheck, IconInfoCircle, IconTrash, IconX } from '@tabler/icons-react';
 
 const modalBackdropStyle = {
   background: 'rgba(15, 23, 42, 0.48)',
@@ -23,13 +23,18 @@ const modalIconStyles = {
   warning: {
     background: '#fef3c7',
     color: '#d97706'
+  },
+  info: {
+    background: '#dbeafe',
+    color: '#2563eb'
   }
 };
 
 const iconByVariant = {
   danger: IconAlertCircle,
   success: IconCircleCheck,
-  warning: IconAlertCircle
+  warning: IconAlertCircle,
+  info: IconInfoCircle
 };
 
 export const ConfirmModal = ({

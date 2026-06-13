@@ -5,6 +5,13 @@ const AuthContext = createContext(null);
 
 const TOKEN_KEY = 'tenora_token';
 const USER_KEY = 'tenora_user';
+const AUTH_MESSAGE_KEY = 'tenora_auth_message';
+
+const getStoredAuthMessage = () => {
+  const message = localStorage.getItem(AUTH_MESSAGE_KEY) || '';
+  localStorage.removeItem(AUTH_MESSAGE_KEY);
+  return message;
+};
 
 const getStoredUser = () => {
   const storedUser = localStorage.getItem(USER_KEY);
@@ -28,6 +35,7 @@ export const AuthProvider = ({ children }) => {
   const [accessStatus, setAccessStatus] = useState(null);
   const [accessError, setAccessError] = useState('');
   const [isAccessLoading, setIsAccessLoading] = useState(true);
+  const [authError, setAuthError] = useState(getStoredAuthMessage);
   const shouldRunCountdown = Boolean(
     accessStatus
     && !accessStatus.isExpired
@@ -46,6 +54,7 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
     setToken(nextToken);
     setUser(nextUser);
+    setAuthError('');
   }, []);
 
   const refreshAccessStatus = useCallback(async () => {
@@ -197,6 +206,7 @@ export const AuthProvider = ({ children }) => {
     user,
     accessStatus,
     accessError,
+    authError,
     isAccessExpired: Boolean(accessStatus?.isExpired),
     isAccessLoading,
     isAuthenticated: Boolean(token && user && accessStatus && !accessStatus.isExpired),
@@ -208,6 +218,7 @@ export const AuthProvider = ({ children }) => {
   }), [
     accessError,
     accessStatus,
+    authError,
     clearSession,
     isAccessLoading,
     isBootstrapping,

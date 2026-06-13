@@ -37,9 +37,8 @@ const getSummary = async () => {
                 (SELECT COUNT(*) FROM payments)::int AS payments,
                 (SELECT COUNT(*) FROM service_charge_demands)::int AS service_charge_demands,
                 (
-                    SELECT COALESCE(SUM(floor_area_sqm), 0)
-                    FROM units
-                    WHERE status = 'active'
+                    SELECT COALESCE(SUM(total_lettable_space), 0)
+                    FROM properties
                 ) AS total_lettable_space
         `),
         pool.query(`

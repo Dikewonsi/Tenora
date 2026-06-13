@@ -49,8 +49,11 @@ const navGroups = [
     ]
   },
   {
-    label: '',
-    items: [{ label: 'Settings', path: '/settings', icon: IconSettings }]
+    label: 'Settings',
+    items: [
+      { label: 'Workspace Settings', path: '/settings', icon: IconSettings, end: true },
+      { label: 'Users & Access', path: '/settings/users', icon: IconUsers, roles: ['super_admin'] }
+    ]
   }
 ];
 
@@ -64,6 +67,7 @@ const pageMeta = [
   { match: /\/service-charges\/.+\/document/, title: 'Demand Notice', parent: 'Service Charges' },
   { match: /\/service-charges\/.+\/schedule/, title: 'Budget Schedule', parent: 'Service Charges' },
   { match: /^\/service-charges/, title: 'Service Charges', parent: 'Money' },
+  { match: /^\/settings\/users/, title: 'Users & Access', parent: 'Settings' },
   { match: /^\/settings/, title: 'Settings', parent: 'Workspace' }
 ];
 
@@ -115,12 +119,13 @@ const MainLayout = () => {
     <div className="tenora-sidebar-group" key={group.label || `nav-${groupIndex}`}>
       {group.label && <div className="tenora-sidebar-label">{group.label}</div>}
       <div className="tenora-sidebar-links">
-        {group.items.map((item) => {
+        {group.items.filter((item) => !item.roles || item.roles.includes(user?.role)).map((item) => {
           const Icon = item.icon;
           return (
             <NavLink
               key={item.path}
               to={item.path}
+              end={item.end}
               onClick={onNavigate}
               className={({ isActive }) => `tenora-sidebar-link ${isActive ? 'is-active' : ''}`}
             >

@@ -141,7 +141,7 @@ const Dashboard = () => {
             <button type="button" onClick={() => navigate('/properties')}><span className="tenora-icon-tile"><IconBuildingEstate size={18} /></span><span><small>Properties</small><strong>{isLoading ? '...' : counts.properties || 0}</strong></span></button>
             <button type="button" onClick={() => navigate('/tenants')}><span className="tenora-icon-tile is-blue"><IconUsers size={18} /></span><span><small>Tenant records</small><strong>{isLoading ? '...' : counts.tenants || 0}</strong></span></button>
             <button type="button" onClick={() => navigate('/leases')}><span className="tenora-icon-tile is-amber"><IconFileInvoice size={18} /></span><span><small>Active tenancies</small><strong>{isLoading ? '...' : counts.active_leases || 0}</strong></span></button>
-            <button type="button" onClick={() => navigate('/units')}><span className="tenora-icon-tile is-slate"><IconRulerMeasure size={18} /></span><span><small>Active floor area</small><strong>{isLoading ? '...' : `${Number(counts.total_lettable_space || 0).toLocaleString()} sqm`}</strong></span></button>
+            <button type="button" onClick={() => navigate('/properties')}><span className="tenora-icon-tile is-slate"><IconRulerMeasure size={18} /></span><span><small>Total lettable space</small><strong>{isLoading ? '...' : `${Number(counts.total_lettable_space || 0).toLocaleString()} sqm`}</strong></span></button>
           </div>
         </DashboardWidget>
 

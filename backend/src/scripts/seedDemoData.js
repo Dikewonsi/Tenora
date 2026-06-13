@@ -38,8 +38,8 @@ const propertyFixtures = [
         name: 'Palm Grove Residences',
         address: '8 Fola Osibo Street, Lekki Phase 1, Lagos',
         location: 'Lekki Phase 1, Lagos',
-        description: 'Small residential block using an equal service charge per apartment.',
-        method: 'flat_rate',
+        description: 'Small residential block with service charges allocated by measured floor area.',
+        method: 'pro_rata',
         totalBudget: 3600000,
         paymentRatios: [1, 1, 1, 1],
         units: [
@@ -84,8 +84,8 @@ const propertyFixtures = [
         name: 'Cedar Court',
         address: '11 Isaac John Street, Ikeja GRA, Lagos',
         location: 'Ikeja GRA, Lagos',
-        description: 'Three-family property using a simple flat service charge.',
-        method: 'flat_rate',
+        description: 'Three-family property with service charges allocated by measured floor area.',
+        method: 'pro_rata',
         totalBudget: 2400000,
         paymentRatios: [1, 1, 1],
         units: [
@@ -114,8 +114,8 @@ const propertyFixtures = [
         name: 'Arewa Plaza',
         address: '18 Aminu Kano Crescent, Wuse 2, Abuja',
         location: 'Wuse 2, Abuja',
-        description: 'Neighbourhood retail plaza sharing common services equally.',
-        method: 'flat_rate',
+        description: 'Neighbourhood retail plaza with common services allocated by shop floor area.',
+        method: 'pro_rata',
         totalBudget: 4500000,
         paymentRatios: [0.6, 0.6, 0.6, 0.6, 0.6],
         units: [
@@ -127,10 +127,10 @@ const propertyFixtures = [
         ]
     },
     {
-        name: 'Maple Terraces',
-        address: '27 Diya Street, Gbagada Phase 2, Lagos',
-        location: 'Gbagada, Lagos',
-        description: 'Terraced homes including one unit that is currently vacant.',
+        name: 'Jabi Lake Terraces',
+        address: '27 Alex Ekwueme Way, Jabi, Abuja',
+        location: 'Jabi, Abuja',
+        description: 'Terraced homes near Jabi Lake including one unit with an expired tenancy.',
         method: 'pro_rata',
         totalBudget: 6200000,
         periodStart: '2025-01-01',
@@ -145,11 +145,11 @@ const propertyFixtures = [
         ]
     },
     {
-        name: 'Heritage Gardens',
-        address: '6 Jericho Road, Ibadan, Oyo State',
-        location: 'Jericho, Ibadan',
+        name: 'Gwarinpa Heritage Gardens',
+        address: '6 First Avenue, Gwarinpa, Abuja',
+        location: 'Gwarinpa, Abuja',
         description: 'Residential estate demonstrating mostly unpaid demands and follow-up reminders.',
-        method: 'flat_rate',
+        method: 'pro_rata',
         totalBudget: 3000000,
         paymentRatios: [0.1, 0, 0, 0],
         units: [
@@ -160,9 +160,9 @@ const propertyFixtures = [
         ]
     },
     {
-        name: 'Coal City Court',
-        address: '16 Independence Layout, Enugu, Enugu State',
-        location: 'Independence Layout, Enugu',
+        name: 'Asokoro Court',
+        address: '16 Yakubu Gowon Crescent, Asokoro, Abuja',
+        location: 'Asokoro, Abuja',
         description: 'Family apartments with service charges allocated by floor area.',
         method: 'pro_rata',
         totalBudget: 4800000,
@@ -251,14 +251,24 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
     const periodStart = fixture.periodStart || '2026-01-01';
     const periodEnd = fixture.periodEnd || '2026-12-31';
     const dueDate = fixture.dueDate || '2026-02-15';
+    const totalLettableSpace = fixture.units.reduce(
+        (total, unit) => total + Number(unit.area || 0),
+        0
+    );
     const property = await insertRow(
         client,
         `
-            INSERT INTO properties (property_name, address, location, property_description)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO properties (
+                property_name,
+                address,
+                location,
+                property_description,
+                total_lettable_space
+            )
+            VALUES ($1, $2, $3, $4, $5)
             RETURNING id, property_name
         `,
-        [fixture.name, fixture.address, fixture.location, fixture.description]
+        [fixture.name, fixture.address, fixture.location, fixture.description, totalLettableSpace]
     );
     created.properties += 1;
 
@@ -341,6 +351,19 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
 
     const allocationAmounts = allocateBudget(fixture.totalBudget, fixture.units, fixture.method);
     const totalArea = fixture.units.reduce((sum, unit) => sum + unit.area, 0);
+    const occupiedBilledArea = fixture.units
+        .filter((unit) => !unit.expired)
+        .reduce((sum, unit) => sum + unit.area, 0);
+    const vacantArea = totalArea - occupiedBilledArea;
+    const tenantDemandTotal = allocationAmounts.reduce(
+        (sum, allocation, index) => (
+            fixture.units[index].expired ? sum : sum + allocation.charge
+        ),
+        0
+    );
+    const ownerLiabilityTotal = Math.round(
+        (fixture.totalBudget - tenantDemandTotal) * 100
+    ) / 100;
     const budget = await insertRow(
         client,
         `
@@ -355,8 +378,16 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
                 status,
                 total_units,
                 total_area_sqm,
+                denominator_area_sqm,
+                configured_area_sqm,
+                occupied_billed_area_sqm,
+                vacant_area_sqm,
+                inactive_area_sqm,
+                unconfigured_area_sqm,
                 calculated_total,
                 final_total,
+                tenant_demand_total,
+                owner_liability_total,
                 due_date,
                 payment_instruction,
                 budget_note,
@@ -367,9 +398,10 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
                 issued_by
             )
             VALUES (
-                $1, $2, $3, $4, $5, $6, $7, 'issued', $8, $9, $3, $3, $10,
-                $11, $12, '2026-01-05 09:00:00', '2026-01-06 10:00:00', $13,
-                '2026-01-07 11:00:00', $13
+                $1, $2, $3, $4, $5, $6, $7, 'issued', $8, $9, $9, $9, $10, $11,
+                0, 0, $12, $12, $12, $13, $14, $15, $16,
+                '2026-01-05 09:00:00', '2026-01-06 10:00:00', $17,
+                '2026-01-07 11:00:00', $17
             )
             RETURNING id
         `,
@@ -383,11 +415,13 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
             fixture.method === 'pro_rata' ? 'floor_area' : null,
             fixture.units.length,
             totalArea,
+            occupiedBilledArea,
+            vacantArea,
+            tenantDemandTotal,
+            ownerLiabilityTotal,
             dueDate,
             'Pay by bank transfer and quote the demand reference.',
-            fixture.method === 'flat_rate'
-                ? 'Equal charge per unit.'
-                : 'Allocated according to each unit floor area.',
+            'Allocated according to each unit floor area against the property total lettable space.',
             adminId
         ]
     );
@@ -409,12 +443,17 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
                     tenant_email_snapshot,
                     tenant_phone_snapshot,
                     floor_area_sqm_snapshot,
+                    unit_status_snapshot,
+                    billing_eligible,
                     percentage_share,
                     calculated_charge,
                     final_charge,
                     status
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, 'issued')
+                VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+                    'active', $10, $11, $12, $12, 'issued'
+                )
                 RETURNING id
             `,
             [
@@ -427,11 +466,16 @@ const seedProperty = async (client, fixture, propertyIndex, adminId, created) =>
                 record.tenant.email,
                 record.tenant.phone_number,
                 record.fixture.area,
+                !record.fixture.expired,
                 allocationAmount.percentageShare,
                 allocationAmount.charge
             ]
         );
         created.allocations += 1;
+
+        if(record.fixture.expired) {
+            continue;
+        }
 
         const paymentRatio = fixture.paymentRatios[unitIndex] ?? fixture.paymentRatios[0] ?? 0;
         const amountPaid = Math.round(allocationAmount.charge * paymentRatio * 100) / 100;
@@ -642,7 +686,19 @@ const run = async () => {
         const usersBeforeResult = await client.query('SELECT COUNT(*)::int AS count FROM users');
         const usersBefore = usersBeforeResult.rows[0].count;
         const adminResult = await client.query(
-            `SELECT id FROM users WHERE is_active = TRUE ORDER BY (role = 'admin') DESC, created_at LIMIT 1`
+            `
+                SELECT id
+                FROM users
+                WHERE is_active = TRUE
+                ORDER BY
+                    CASE role
+                        WHEN 'super_admin' THEN 0
+                        WHEN 'admin' THEN 1
+                        ELSE 2
+                    END,
+                    created_at
+                LIMIT 1
+            `
         );
         const adminId = adminResult.rows[0]?.id || null;
 
@@ -673,6 +729,21 @@ const run = async () => {
             throw new Error(`Expected 10 properties, created ${created.properties}`);
         }
 
+        const geographyResult = await client.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE location ILIKE '%Lagos%')::int AS lagos,
+                COUNT(*) FILTER (WHERE location ILIKE '%Abuja%')::int AS abuja,
+                COUNT(*)::int AS total
+            FROM properties
+        `);
+        const geography = geographyResult.rows[0];
+
+        if(geography.total !== 10 || geography.lagos !== 5 || geography.abuja !== 5) {
+            throw new Error(
+                `Expected 5 Lagos and 5 Abuja properties, found Lagos=${geography.lagos}, Abuja=${geography.abuja}, total=${geography.total}`
+            );
+        }
+
         const expiryResult = await client.query(`
             SELECT COUNT(*)::int AS count
             FROM leases
@@ -694,6 +765,7 @@ const run = async () => {
                 : 'Tenora application data reset and demo data seeded successfully.'
         );
         console.log(`Users preserved: ${usersAfter}`);
+        console.log(`Property geography: Lagos=${geography.lagos}, Abuja=${geography.abuja}`);
         console.log(`Leases expiring within 90 days: ${visibleExpiringLeases}`);
         console.table(created);
         console.log('Full-flow example: Ancestors Court / A1 / Test Tenant / 2026 Service Charge Budget');

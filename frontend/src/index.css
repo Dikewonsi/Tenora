@@ -2060,6 +2060,116 @@ button.tenora-stat-card.is-action:hover {
   border-top: 1px solid var(--tenora-border);
 }
 
+.tenora-property-wizard { width: min(820px, 100%); }
+
+.tenora-wizard-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 12px 20px;
+  background: var(--tenora-surface);
+  border-bottom: 1px solid var(--tenora-border);
+}
+
+.tenora-wizard-steps span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--tenora-muted);
+  font-size: .65rem;
+  font-weight: 750;
+}
+
+.tenora-wizard-steps i {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  font-style: normal;
+  background: #fff;
+  border: 1px solid var(--tenora-border);
+  border-radius: 50%;
+}
+
+.tenora-wizard-steps span.is-active { color: var(--tenora-emerald-dark); }
+.tenora-wizard-steps span.is-active i { color: #fff; background: var(--tenora-emerald); border-color: var(--tenora-emerald); }
+
+.tenora-wizard-area-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tenora-wizard-area-summary > div,
+.tenora-wizard-review > section {
+  padding: 13px;
+  background: var(--tenora-surface);
+  border: 1px solid var(--tenora-border);
+  border-radius: 10px;
+}
+
+.tenora-wizard-area-summary small,
+.tenora-wizard-area-summary strong { display: block; }
+.tenora-wizard-area-summary small { color: var(--tenora-muted); font-size: .61rem; }
+.tenora-wizard-area-summary strong { margin-top: 3px; font-size: .78rem; }
+.tenora-wizard-area-summary .is-error { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }
+
+.tenora-wizard-unit-list,
+.tenora-wizard-review,
+.tenora-wizard-review-units { display: grid; gap: 12px; }
+
+.tenora-wizard-unit-list article {
+  padding: 14px;
+  border: 1px solid var(--tenora-border);
+  border-radius: 10px;
+}
+
+.tenora-wizard-unit-list article > header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.tenora-wizard-unit-list article > header button {
+  padding: 0;
+  color: #b91c1c;
+  background: transparent;
+  border: 0;
+  font-size: .65rem;
+  font-weight: 750;
+}
+
+.tenora-wizard-empty {
+  padding: 20px;
+  color: var(--tenora-muted);
+  text-align: center;
+  background: var(--tenora-surface);
+  border: 1px dashed var(--tenora-border);
+  border-radius: 10px;
+  font-size: .7rem;
+}
+
+.tenora-wizard-review > section h4 { margin: 3px 0; }
+.tenora-wizard-review > section p,
+.tenora-wizard-review > section span { margin: 0; color: var(--tenora-muted); font-size: .68rem; }
+
+.tenora-wizard-review-units {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tenora-wizard-review-units > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--tenora-border);
+  border-radius: 9px;
+  font-size: .68rem;
+}
+
+.tenora-wizard-review-units span { color: var(--tenora-muted); }
+
 .tenora-unit-summary {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -2941,6 +3051,8 @@ button.tenora-stat-card.is-action:hover {
   .tenora-property-modal > header,
   .tenora-property-modal > footer,
   .tenora-property-modal-body { padding: 15px; }
+  .tenora-wizard-steps { padding: 10px 15px; }
+  .tenora-wizard-area-summary { grid-template-columns: 1fr 1fr; }
   .tenora-form-section { grid-template-columns: 1fr; gap: 10px; }
   .tenora-unit-summary { grid-template-columns: 1fr 1fr; }
   .tenora-unit-toolbar .tenora-unit-filters { grid-template-columns: 1fr 1fr; }
@@ -2978,6 +3090,8 @@ button.tenora-stat-card.is-action:hover {
   .tenora-property-toolbar form > * { grid-column: 1 / -1; }
   .tenora-property-modal > footer { align-items: stretch; flex-direction: column-reverse; }
   .tenora-property-modal > footer .btn { width: 100%; }
+  .tenora-wizard-steps { grid-template-columns: 1fr; }
+  .tenora-wizard-review-units { grid-template-columns: 1fr; }
   .tenora-unit-summary { grid-template-columns: 1fr; }
   .tenora-unit-toolbar .tenora-unit-filters { grid-template-columns: 1fr; }
   .tenora-unit-toolbar .tenora-unit-filters > * { grid-column: 1 / -1; }

@@ -1,5 +1,10 @@
 import pool from '../db/pool.js';
 import { getPagination } from '../utils/pagination.js';
+import {
+    assertConfiguredAreaWithinTotal,
+    getPropertyAreaState,
+    normalizeUnitData
+} from './propertyAreaService.js';
 
 const unitColumns = `
     units.id,
@@ -51,42 +56,6 @@ const selectUnitQuery = `
         LIMIT 1
     ) occupancy ON TRUE
 `;
-
-const isMissing = (value) => value === undefined || value === null || value === '';
-
-const validateUnitData = ({ property_id, unit_name, floor_area_sqm, bedrooms, status }) => {
-    if(isMissing(property_id) || !String(unit_name || '').trim()) {
-        const error = new Error('Property and unit name/number are required');
-        error.status = 400;
-        throw error;
-    }
-
-    if(!isMissing(floor_area_sqm)) {
-        const floorArea = Number(floor_area_sqm);
-
-        if(Number.isNaN(floorArea) || floorArea < 0) {
-            const error = new Error('Floor area must be zero or greater');
-            error.status = 400;
-            throw error;
-        }
-    }
-
-    if(!isMissing(bedrooms)) {
-        const bedroomCount = Number(bedrooms);
-
-        if(!Number.isInteger(bedroomCount) || bedroomCount < 0) {
-            const error = new Error('Bedrooms must be a whole number of zero or greater');
-            error.status = 400;
-            throw error;
-        }
-    }
-
-    if(status && !['active', 'inactive'].includes(status)) {
-        const error = new Error('Unit status must be active or inactive');
-        error.status = 400;
-        throw error;
-    }
-};
 
 const getAllUnits = async (filters = {}) => {
     const { property_id, status, search } = filters;
@@ -148,18 +117,17 @@ const getUnitById = async (id) => {
 };
 
 const createUnit = async (unitData) => {
-    const {
-        property_id,
-        unit_name,
-        floor_area_sqm,
-        bedrooms,
-        status
-    } = unitData;
-
-    validateUnitData(unitData);
+    const normalizedData = normalizeUnitData(unitData);
+    const client = await pool.connect();
 
     try {
-        const result = await pool.query(
+        await client.query('BEGIN');
+        const areaState = await getPropertyAreaState(client, normalizedData.property_id, { lock: true });
+        assertConfiguredAreaWithinTotal({
+            configuredArea: areaState.configuredUnitArea + Number(normalizedData.floor_area_sqm || 0),
+            totalLettableSpace: areaState.totalLettableSpace
+        });
+        const result = await client.query(
             `
                 INSERT INTO units (
                     property_id,
@@ -172,16 +140,19 @@ const createUnit = async (unitData) => {
                 RETURNING ${unitReturningColumns}
             `,
             [
-                property_id,
-                String(unit_name).trim(),
-                isMissing(floor_area_sqm) ? null : Number(floor_area_sqm),
-                isMissing(bedrooms) ? null : Number(bedrooms),
-                status || 'active'
+                normalizedData.property_id,
+                normalizedData.unit_name,
+                normalizedData.floor_area_sqm,
+                normalizedData.bedrooms,
+                normalizedData.status
             ]
         );
 
+        await client.query('COMMIT');
         return result.rows[0];
     } catch (error) {
+        await client.query('ROLLBACK');
+
         if(error.code === '23503') {
             error.message = 'Selected property does not exist';
             error.status = 400;
@@ -193,23 +164,47 @@ const createUnit = async (unitData) => {
         }
 
         throw error;
+    } finally {
+        client.release();
     }
 };
 
 const updateUnit = async (id, unitData) => {
     const existingUnit = await getUnitById(id);
-    const nextData = {
+    const nextData = normalizeUnitData({
         property_id: unitData.property_id ?? existingUnit.property_id,
         unit_name: unitData.unit_name ?? existingUnit.unit_name,
-        floor_area_sqm: unitData.floor_area_sqm ?? existingUnit.floor_area_sqm,
-        bedrooms: unitData.bedrooms ?? existingUnit.bedrooms,
+        floor_area_sqm: Object.hasOwn(unitData, 'floor_area_sqm')
+            ? unitData.floor_area_sqm
+            : existingUnit.floor_area_sqm,
+        bedrooms: Object.hasOwn(unitData, 'bedrooms')
+            ? unitData.bedrooms
+            : existingUnit.bedrooms,
         status: unitData.status ?? existingUnit.status
-    };
-
-    validateUnitData(nextData);
+    });
+    const client = await pool.connect();
 
     try {
-        const result = await pool.query(
+        await client.query('BEGIN');
+        const propertyIds = [...new Set([existingUnit.property_id, nextData.property_id])].sort();
+        await client.query(
+            `
+                SELECT id
+                FROM properties
+                WHERE id = ANY($1::uuid[])
+                ORDER BY id
+                FOR UPDATE
+            `,
+            [propertyIds]
+        );
+        const areaState = await getPropertyAreaState(client, nextData.property_id, {
+            excludeUnitId: id
+        });
+        assertConfiguredAreaWithinTotal({
+            configuredArea: areaState.configuredUnitArea + Number(nextData.floor_area_sqm || 0),
+            totalLettableSpace: areaState.totalLettableSpace
+        });
+        const result = await client.query(
             `
                 UPDATE units
                 SET
@@ -224,16 +219,19 @@ const updateUnit = async (id, unitData) => {
             `,
             [
                 nextData.property_id,
-                String(nextData.unit_name).trim(),
-                isMissing(nextData.floor_area_sqm) ? null : Number(nextData.floor_area_sqm),
-                isMissing(nextData.bedrooms) ? null : Number(nextData.bedrooms),
+                nextData.unit_name,
+                nextData.floor_area_sqm,
+                nextData.bedrooms,
                 nextData.status,
                 id
             ]
         );
 
+        await client.query('COMMIT');
         return result.rows[0];
     } catch (error) {
+        await client.query('ROLLBACK');
+
         if(error.code === '23503') {
             error.message = 'Selected property does not exist';
             error.status = 400;
@@ -245,6 +243,8 @@ const updateUnit = async (id, unitData) => {
         }
 
         throw error;
+    } finally {
+        client.release();
     }
 };
 

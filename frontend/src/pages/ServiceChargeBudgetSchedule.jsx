@@ -7,10 +7,12 @@ import { EmptyState, MobileRecordCard, StatusBadge, WorkflowStepper } from '../c
 
 const money = new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 2 });
 const percentage = new Intl.NumberFormat('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+const area = new Intl.NumberFormat('en-NG', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const formatPercentage = (value) => {
   const numericValue = Number(value);
   return `${percentage.format(Number.isFinite(numericValue) ? numericValue * 100 : 0)}%`;
 };
+const formatArea = (value) => `${area.format(Number(value || 0))} sqm`;
 const dateOnly = (value) => (value ? String(value).slice(0, 10) : '-');
 
 const ServiceChargeBudgetSchedule = () => {
@@ -42,8 +44,11 @@ const ServiceChargeBudgetSchedule = () => {
       let nextSchedule = response.data.data.schedule;
 
       if (
-        nextSchedule.budget?.status === 'draft'
-        && (nextSchedule.allocations || []).length === 0
+        nextSchedule.budget?.status !== 'issued'
+        && (
+          (nextSchedule.allocations || []).length === 0
+          || nextSchedule.validation?.schedule_stale
+        )
         && automaticCalculationBudgetId.current !== budgetId
       ) {
         automaticCalculationBudgetId.current = budgetId;
@@ -200,13 +205,13 @@ const ServiceChargeBudgetSchedule = () => {
       <section className="tenora-schedule-summary">
         {[
           ['Total budget', money.format(Number(budget.total_budget || 0))],
-          ['Total lettable space', `${Number(budget.denominator_area_sqm ?? budget.total_area_sqm ?? budget.property_total_lettable_space ?? 0).toLocaleString()} sqm`],
+          [budget.calculation_method === 'flat_rate' ? 'Flat rate basis' : 'Total lettable space', budget.calculation_method === 'flat_rate' ? `${Number(budget.total_units || allocations.length || 0).toLocaleString()} physical units` : formatArea(budget.denominator_area_sqm ?? budget.total_area_sqm ?? budget.property_total_lettable_space ?? 0)],
           ['Tenant demand total', money.format(currentFinalTotal)],
           ['Owner / unallocated', money.format(ownerLiabilityTotal)],
-          ['Occupied billed area', `${Number(budget.occupied_billed_area_sqm || 0).toLocaleString()} sqm`],
-          ['Vacant area', `${Number(budget.vacant_area_sqm || 0).toLocaleString()} sqm`],
-          ['Inactive area', `${Number(budget.inactive_area_sqm || 0).toLocaleString()} sqm`],
-          ['Unconfigured area', `${Number(budget.unconfigured_area_sqm || 0).toLocaleString()} sqm`]
+          ['Occupied billed area', formatArea(budget.occupied_billed_area_sqm || 0)],
+          ['Vacant area', formatArea(budget.vacant_area_sqm || 0)],
+          ['Inactive area', formatArea(budget.inactive_area_sqm || 0)],
+          ['Unconfigured area', formatArea(budget.unconfigured_area_sqm || 0)]
         ].map(([label, value]) => <article key={label}><small>{label}</small><strong>{isLoading ? '...' : value}</strong></article>)}
       </section>
 
@@ -229,7 +234,7 @@ const ServiceChargeBudgetSchedule = () => {
               <tr key={allocation.id} className={changedAllocationIds.includes(allocation.id) ? 'tenora-changed-row' : ''}>
                 <td><strong>{allocation.unit_name_snapshot}</strong></td>
                 <td>{allocation.tenant_name_snapshot || <span className="text-warning">{allocation.unit_status_snapshot === 'inactive' ? 'Inactive' : 'Vacant'}</span>}<div className="small text-secondary">{allocation.tenant_email_snapshot || allocation.tenant_phone_snapshot || ''}</div></td>
-                <td>{allocation.floor_area_sqm_snapshot === null ? '-' : `${Number(allocation.floor_area_sqm_snapshot).toLocaleString()} sqm`}</td>
+                <td>{allocation.floor_area_sqm_snapshot === null ? '-' : formatArea(allocation.floor_area_sqm_snapshot)}</td>
                 <td>{formatPercentage(allocation.percentage_share)}</td>
                 <td>{money.format(Number(allocation.calculated_charge || 0))}</td>
                 <td><input className="form-control form-control-sm" type="number" min="0" step="0.01" value={draftRows[allocation.id]?.final_charge ?? allocation.final_charge} disabled={budget.status === 'issued' || !isBillingEligible(allocation)} onChange={(event) => setDraftRows((current) => ({ ...current, [allocation.id]: { ...current[allocation.id], final_charge: event.target.value } }))} /></td>
@@ -249,7 +254,7 @@ const ServiceChargeBudgetSchedule = () => {
               subtitle={allocation.tenant_name_snapshot || (allocation.unit_status_snapshot === 'inactive' ? 'Inactive unit' : 'Vacant unit')}
               status={allocation.demand_status || allocation.status}
               meta={[
-                ['Area', allocation.floor_area_sqm_snapshot === null ? '-' : `${Number(allocation.floor_area_sqm_snapshot).toLocaleString()} sqm`],
+                ['Area', allocation.floor_area_sqm_snapshot === null ? '-' : formatArea(allocation.floor_area_sqm_snapshot)],
                 ['Share', formatPercentage(allocation.percentage_share)],
                 ['Calculated', money.format(Number(allocation.calculated_charge || 0))],
                 ['Balance', allocation.demand_id ? money.format(Number(allocation.balance || 0)) : 'Not issued']

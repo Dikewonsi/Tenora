@@ -24,6 +24,11 @@ const leaseColumns = `
 const selectLeaseQuery = `
     SELECT
         ${leaseColumns},
+        CASE
+            WHEN leases.status = 'active' AND leases.end_date < CURRENT_DATE THEN 'expired'
+            ELSE leases.status
+        END AS effective_status,
+        (leases.end_date - CURRENT_DATE)::int AS days_remaining,
         properties.property_name,
         tenants.full_name AS tenant_name,
         units.unit_name,
@@ -106,7 +111,25 @@ const getAllLeases = async (filters = {}) => {
     const whereClause = `
         WHERE ($1::uuid IS NULL OR leases.property_id = $1)
           AND ($2::uuid IS NULL OR leases.tenant_id = $2)
-          AND ($3::text IS NULL OR leases.status = $3)
+          AND (
+              $3::text IS NULL
+              OR (
+                  $3::text = 'active'
+                  AND leases.status = 'active'
+                  AND leases.end_date >= CURRENT_DATE
+              )
+              OR (
+                  $3::text = 'expired'
+                  AND (
+                      leases.status = 'expired'
+                      OR (leases.status = 'active' AND leases.end_date < CURRENT_DATE)
+                  )
+              )
+              OR (
+                  $3::text NOT IN ('active', 'expired')
+                  AND leases.status = $3
+              )
+          )
     `;
 
     const params = [property_id || null, tenant_id || null, status || null];
@@ -167,6 +190,7 @@ const getRentExpiryBuckets = async () => {
     );
 
     const buckets = {
+        expired: [],
         expiring_soon: [],
         '30_days': [],
         '60_days': [],
@@ -177,9 +201,34 @@ const getRentExpiryBuckets = async () => {
         buckets[lease.expiry_bucket].push(lease);
     });
 
+    const expiredResult = await pool.query(
+        `
+            SELECT
+                leases.id,
+                leases.end_date,
+                leases.rent_amount,
+                leases.status,
+                properties.property_name,
+                tenants.full_name AS tenant_name,
+                COALESCE(units.unit_name, leases.unit_number) AS unit_name,
+                (leases.end_date - CURRENT_DATE)::int AS days_remaining,
+                'expired' AS expiry_bucket
+            FROM leases
+            INNER JOIN properties ON properties.id = leases.property_id
+            INNER JOIN tenants ON tenants.id = leases.tenant_id
+            LEFT JOIN units ON units.id = leases.unit_id
+            WHERE leases.status = 'active'
+              AND leases.end_date < CURRENT_DATE
+            ORDER BY leases.end_date DESC, tenants.full_name ASC
+        `
+    );
+
+    buckets.expired = expiredResult.rows;
+
     return {
         buckets,
-        leases: result.rows
+        leases: result.rows,
+        expired: expiredResult.rows
     };
 };
 

@@ -40,6 +40,7 @@ const emptyForm = {
 };
 
 const toDateInput = (value) => (value ? String(value).slice(0, 10) : '');
+const getLeaseDisplayStatus = (lease) => lease.effective_status || lease.status || 'active';
 
 const Leases = () => {
   const location = useLocation();
@@ -99,9 +100,10 @@ const Leases = () => {
   ), [form.unit_id, units]);
 
   const leaseStats = useMemo(() => {
-    const active = leases.filter((lease) => lease.status === 'active').length;
+    const active = leases.filter((lease) => getLeaseDisplayStatus(lease) === 'active').length;
+    const expired = leases.filter((lease) => getLeaseDisplayStatus(lease) === 'expired').length;
     const expiringSoon = leases.filter((lease) => {
-      if (!lease.end_date || lease.status !== 'active') {
+      if (!lease.end_date || getLeaseDisplayStatus(lease) !== 'active') {
         return false;
       }
 
@@ -116,6 +118,7 @@ const Leases = () => {
 
     return {
       active,
+      expired,
       expiringSoon,
       annualRent,
       occupiedSpace
@@ -134,18 +137,19 @@ const Leases = () => {
   };
 
   const filteredExpiryLeases = useMemo(() => {
+    if (expiryFilter === 'expired') return rentExpiry.expired || rentExpiry.buckets?.expired || [];
     if (!expiryFilter) return rentExpiry.leases || [];
 
     return (rentExpiry.leases || []).filter((lease) => {
       const days = Number(lease.days_remaining);
       if (!Number.isFinite(days)) return false;
-      if (['under30', 'expiring_soon'].includes(expiryFilter)) return days < 30;
+      if (['under30', 'expiring_soon'].includes(expiryFilter)) return days >= 0 && days < 30;
       if (['30', '30_days'].includes(expiryFilter)) return days >= 30 && days < 60;
       if (['60', '60_days'].includes(expiryFilter)) return days >= 60 && days < 90;
       if (['90', '90_days'].includes(expiryFilter)) return days >= 90 && days <= 90;
       return true;
     });
-  }, [expiryFilter, rentExpiry.leases]);
+  }, [expiryFilter, rentExpiry.buckets, rentExpiry.expired, rentExpiry.leases]);
 
   const fetchLookups = async () => {
     const [propertiesResponse, tenantsResponse, expiryResponse] = await Promise.all([
@@ -385,6 +389,7 @@ const Leases = () => {
 
       <section className="tenora-lease-summary" aria-label="Tenancy summary">
         <article><span className="tenora-property-summary-icon"><IconFileInvoice size={19} /></span><div><small>Active shown</small><strong>{isLoading ? '...' : leaseStats.active}</strong></div></article>
+        <article><span className="tenora-property-summary-icon is-slate"><IconAlertTriangle size={19} /></span><div><small>Expired shown</small><strong>{isLoading ? '...' : leaseStats.expired}</strong></div></article>
         <article><span className="tenora-property-summary-icon is-amber"><IconClock size={19} /></span><div><small>Expiring within 90 days</small><strong>{isLoading ? '...' : (rentExpiry.leases || []).length}</strong></div></article>
         <article><span className="tenora-property-summary-icon is-blue"><IconCash size={19} /></span><div><small>Rent value shown</small><strong>{isLoading ? '...' : money.format(leaseStats.annualRent)}</strong></div></article>
         <article><span className="tenora-property-summary-icon is-slate"><IconHome size={19} /></span><div><small>Occupied space shown</small><strong>{isLoading ? '...' : `${leaseStats.occupiedSpace.toLocaleString()} sqm`}</strong></div></article>
@@ -399,6 +404,7 @@ const Leases = () => {
         <div className="tenora-expiry-layout">
           <div className="tenora-expiry-buckets">
             {[
+              ['Expired', 'expired', 'expired', 'is-red'],
               ['Expiring Soon', 'expiring_soon', 'under30', 'is-red'],
               ['30 Days', '30_days', '30', 'is-orange'],
               ['60 Days', '60_days', '60', 'is-amber'],
@@ -414,7 +420,7 @@ const Leases = () => {
               <div key={lease.id}>
                 <span className="tenora-expiry-avatar"><IconCalendarEvent size={16} /></span>
                 <span><strong>{lease.tenant_name}</strong><small>{lease.property_name} · {lease.unit_name || 'No unit'}</small></span>
-                <span><strong>{lease.days_remaining} days</strong><small>{toDateInput(lease.end_date)}</small></span>
+                <span><strong>{Number(lease.days_remaining) < 0 ? `${Math.abs(Number(lease.days_remaining))} days overdue` : `${lease.days_remaining} days`}</strong><small>{toDateInput(lease.end_date)}</small></span>
               </div>
             ))}
             {filteredExpiryLeases.length === 0 && <EmptyState compact title="No matching rent expiries" description="Active tenancies ending in this period will appear here." icon={IconCalendarEvent} />}
@@ -458,15 +464,18 @@ const Leases = () => {
           <div className="tenora-property-grid tenora-lease-grid">
             {leases.map((lease) => {
               const daysRemaining = getDaysRemaining(lease.end_date);
-              const expiring = lease.status === 'active' && daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 90;
+              const displayStatus = getLeaseDisplayStatus(lease);
+              const expired = displayStatus === 'expired';
+              const expiring = displayStatus === 'active' && daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 90;
               return (
                 <article className="tenora-property-card tenora-lease-card" key={lease.id}>
                   <div className="tenora-property-card-top">
                     <span className="tenora-property-avatar"><IconFileInvoice size={22} /></span>
-                    <div className="d-flex align-items-center gap-2"><StatusBadge status={lease.status || 'active'} /><div className="tenora-property-card-actions"><button type="button" onClick={() => openEditModal(lease)} aria-label={`Edit tenancy for ${lease.tenant_name}`}><IconEdit size={16} /></button><button className="is-danger" type="button" onClick={() => openDeleteModal(lease)} aria-label={`Delete tenancy for ${lease.tenant_name}`}><IconTrash size={16} /></button></div></div>
+                    <div className="d-flex align-items-center gap-2"><StatusBadge status={displayStatus} /><div className="tenora-property-card-actions"><button type="button" onClick={() => openEditModal(lease)} aria-label={`Edit tenancy for ${lease.tenant_name}`}><IconEdit size={16} /></button><button className="is-danger" type="button" onClick={() => openDeleteModal(lease)} aria-label={`Delete tenancy for ${lease.tenant_name}`}><IconTrash size={16} /></button></div></div>
                   </div>
                   <div className="tenora-property-card-title"><h3>{lease.tenant_name || 'Tenant'}</h3><p><IconBuildingEstate size={14} /> {lease.property_name || 'Property'} · {lease.unit_name || lease.unit_number || 'No unit'}</p></div>
                   {expiring && <div className="tenora-lease-alert"><IconAlertTriangle size={15} /> Rent due in {daysRemaining} day{daysRemaining === 1 ? '' : 's'}</div>}
+                  {expired && <div className="tenora-lease-alert"><IconAlertTriangle size={15} /> Tenancy expired {Math.abs(Number(daysRemaining || 0))} day{Math.abs(Number(daysRemaining || 0)) === 1 ? '' : 's'} ago</div>}
                   <div className="tenora-lease-term">
                     <div><small>Start date</small><strong>{toDateInput(lease.start_date) || '-'}</strong></div>
                     <IconCalendarEvent size={16} />
@@ -486,17 +495,20 @@ const Leases = () => {
           <div className="table-responsive tenora-property-table tenora-lease-table">
             <table className="table table-vcenter mb-0">
               <thead><tr><th>Tenant / Unit</th><th>Property</th><th>Term</th><th>Rent</th><th>Space</th><th>Status</th><th className="text-end">Actions</th></tr></thead>
-              <tbody>{isLoading ? <tr><td colSpan="7" className="text-center py-5 text-secondary">Loading tenancies...</td></tr> : leases.map((lease) => (
-                <tr key={lease.id}>
-                  <td><div className="d-flex align-items-center gap-3"><span className="tenora-property-table-icon"><IconFileInvoice size={18} /></span><div><strong>{lease.tenant_name || 'Tenant'}</strong><small>{lease.unit_name || lease.unit_number || 'No unit'}</small></div></div></td>
-                  <td>{lease.property_name || '-'}</td>
-                  <td><strong>{toDateInput(lease.start_date)} to {toDateInput(lease.end_date)}</strong><small className="text-capitalize">{lease.payment_frequency || 'yearly'} billing</small></td>
-                  <td>{money.format(Number(lease.rent_amount || 0))}</td>
-                  <td>{Number(lease.occupied_space || lease.floor_area_sqm || 0).toLocaleString()} sqm</td>
-                  <td><StatusBadge status={lease.status || 'active'} /></td>
-                  <td className="text-end"><div className="d-inline-flex gap-2"><button className="btn btn-sm btn-light btn-icon" type="button" onClick={() => openEditModal(lease)}><IconEdit size={16} /></button><button className="btn btn-sm btn-outline-danger btn-icon" type="button" onClick={() => openDeleteModal(lease)}><IconTrash size={16} /></button></div></td>
-                </tr>
-              ))}</tbody>
+              <tbody>{isLoading ? <tr><td colSpan="7" className="text-center py-5 text-secondary">Loading tenancies...</td></tr> : leases.map((lease) => {
+                const displayStatus = getLeaseDisplayStatus(lease);
+                return (
+                  <tr key={lease.id}>
+                    <td><div className="d-flex align-items-center gap-3"><span className="tenora-property-table-icon"><IconFileInvoice size={18} /></span><div><strong>{lease.tenant_name || 'Tenant'}</strong><small>{lease.unit_name || lease.unit_number || 'No unit'}</small></div></div></td>
+                    <td>{lease.property_name || '-'}</td>
+                    <td><strong>{toDateInput(lease.start_date)} to {toDateInput(lease.end_date)}</strong><small className="text-capitalize">{lease.payment_frequency || 'yearly'} billing</small></td>
+                    <td>{money.format(Number(lease.rent_amount || 0))}</td>
+                    <td>{Number(lease.occupied_space || lease.floor_area_sqm || 0).toLocaleString()} sqm</td>
+                    <td><StatusBadge status={displayStatus} /></td>
+                    <td className="text-end"><div className="d-inline-flex gap-2"><button className="btn btn-sm btn-light btn-icon" type="button" onClick={() => openEditModal(lease)}><IconEdit size={16} /></button><button className="btn btn-sm btn-outline-danger btn-icon" type="button" onClick={() => openDeleteModal(lease)}><IconTrash size={16} /></button></div></td>
+                  </tr>
+                );
+              })}</tbody>
             </table>
           </div>
         )}

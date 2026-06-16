@@ -125,14 +125,20 @@ const validateBudgetData = ({
         throw error;
     }
 
-    if(calculation_method !== 'pro_rata') {
-        const error = new Error('New service charge budgets must use pro rata floor-area allocation');
+    if(!['pro_rata', 'flat_rate'].includes(calculation_method)) {
+        const error = new Error('Calculation method must be pro_rata or flat_rate');
         error.status = 400;
         throw error;
     }
 
-    if(basis !== 'floor_area') {
+    if(calculation_method === 'pro_rata' && basis !== 'floor_area') {
         const error = new Error('Pro rata budgets must use floor_area as the basis');
+        error.status = 400;
+        throw error;
+    }
+
+    if(calculation_method === 'flat_rate' && basis !== null) {
+        const error = new Error('Flat rate budgets cannot use an area basis');
         error.status = 400;
         throw error;
     }
@@ -434,6 +440,36 @@ const buildRoundedAllocations = (units, totalBudget, denominatorArea) => {
         }));
 };
 
+const buildFlatRateAllocations = (units, totalBudget) => {
+    const totalCents = toCents(totalBudget);
+    const rawAllocations = units.map((unit, index) => {
+        const rawCents = totalCents / units.length;
+
+        return {
+            ...unit,
+            index,
+            percentageShare: 1 / units.length,
+            chargeCents: Math.floor(rawCents),
+            fraction: rawCents - Math.floor(rawCents)
+        };
+    });
+    let remainder = totalCents - rawAllocations.reduce((total, unit) => total + unit.chargeCents, 0);
+    const remainderOrder = [...rawAllocations].sort((first, second) => (
+        second.fraction - first.fraction || first.index - second.index
+    ));
+
+    for(let index = 0; index < remainder; index += 1) {
+        remainderOrder[index % remainderOrder.length].chargeCents += 1;
+    }
+
+    return rawAllocations
+        .sort((first, second) => first.index - second.index)
+        .map((unit) => ({
+            ...unit,
+            charge: fromCents(unit.chargeCents)
+        }));
+};
+
 const calculateBudget = async (id) => {
     const client = await pool.connect();
 
@@ -447,19 +483,13 @@ const calculateBudget = async (id) => {
             throw error;
         }
 
-        if(budget.calculation_method !== 'pro_rata') {
-            const error = new Error('Legacy flat-rate budgets cannot be recalculated. Create a pro rata floor-area budget instead.');
-            error.status = 400;
-            throw error;
-        }
-
         await client.query(
             'SELECT id FROM properties WHERE id = $1 FOR SHARE',
             [budget.property_id]
         );
         const denominatorArea = Number(budget.property_total_lettable_space || 0);
 
-        if(denominatorArea <= 0) {
+        if(budget.calculation_method === 'pro_rata' && denominatorArea <= 0) {
             const error = new Error('Enter a positive total lettable space for this property before calculating service charges');
             error.status = 400;
             throw error;
@@ -501,7 +531,15 @@ const calculateBudget = async (id) => {
         );
         const units = unitResult.rows;
 
-        const invalidUnits = units.filter((unit) => Number(unit.floor_area_sqm || 0) <= 0);
+        if(units.length === 0) {
+            const error = new Error('Add physical units to this property before calculating service charges');
+            error.status = 400;
+            throw error;
+        }
+
+        const invalidUnits = budget.calculation_method === 'pro_rata'
+            ? units.filter((unit) => Number(unit.floor_area_sqm || 0) <= 0)
+            : [];
 
         if(invalidUnits.length > 0) {
             const names = invalidUnits.map((unit) => unit.unit_name).join(', ');
@@ -512,13 +550,17 @@ const calculateBudget = async (id) => {
 
         const configuredArea = units.reduce((total, unit) => total + Number(unit.floor_area_sqm || 0), 0);
 
-        if(configuredArea - denominatorArea > 0.0001) {
+        if(budget.calculation_method === 'pro_rata' && configuredArea - denominatorArea > 0.0001) {
             const error = new Error(`Configured unit area (${configuredArea.toFixed(2)} sqm) exceeds the property total lettable space (${denominatorArea.toFixed(2)} sqm)`);
             error.status = 400;
             throw error;
         }
 
-        const allocations = buildRoundedAllocations(units, budget.total_budget, denominatorArea)
+        const allocations = (
+            budget.calculation_method === 'flat_rate'
+                ? buildFlatRateAllocations(units, budget.total_budget)
+                : buildRoundedAllocations(units, budget.total_budget, denominatorArea)
+        )
             .map((allocation) => ({
                 ...allocation,
                 billingEligible: (
@@ -610,11 +652,11 @@ const calculateBudget = async (id) => {
                 id,
                 units.length,
                 configuredArea,
-                denominatorArea,
+                budget.calculation_method === 'pro_rata' ? denominatorArea : null,
                 occupiedBilledArea,
                 vacantArea,
                 inactiveArea,
-                unconfiguredArea,
+                budget.calculation_method === 'pro_rata' ? unconfiguredArea : 0,
                 tenantDemandTotal,
                 ownerLiabilityTotal
             ]
@@ -641,10 +683,13 @@ const getBudgetSchedule = async (id) => {
                 service_charge_demands.status AS demand_status,
                 service_charge_demands.total_amount AS demand_total,
                 service_charge_demands.amount_paid,
-                service_charge_demands.balance
+                service_charge_demands.balance,
+                units.floor_area_sqm AS current_floor_area_sqm
             FROM service_charge_allocations
             LEFT JOIN service_charge_demands
                 ON service_charge_demands.allocation_id = service_charge_allocations.id
+            LEFT JOIN units
+                ON units.id = service_charge_allocations.unit_id
             WHERE service_charge_allocations.budget_id = $1
             ORDER BY service_charge_allocations.unit_name_snapshot ASC
         `,
@@ -675,7 +720,15 @@ const getBudgetSchedule = async (id) => {
                 .map((allocation) => allocation.unit_name_snapshot),
             owner_liability_units: allocations
                 .filter((allocation) => !isBillingEligible(allocation))
-                .map((allocation) => allocation.unit_name_snapshot)
+                .map((allocation) => allocation.unit_name_snapshot),
+            schedule_stale: budget.status !== 'issued' && allocations.some((allocation) => (
+                allocation.unit_id
+                && allocation.floor_area_sqm_snapshot !== null
+                && allocation.floor_area_sqm_snapshot !== undefined
+                && allocation.current_floor_area_sqm !== null
+                && allocation.current_floor_area_sqm !== undefined
+                && Math.abs(Number(allocation.floor_area_sqm_snapshot) - Number(allocation.current_floor_area_sqm)) >= 0.005
+            ))
         }
     };
 };
